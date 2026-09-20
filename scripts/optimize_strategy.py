@@ -8,6 +8,8 @@ improved because of ITS weights?"):
     python scripts/optimize_strategy.py classic
     python scripts/optimize_strategy.py smc
     python scripts/optimize_strategy.py ict
+    python scripts/optimize_strategy.py sweep_displacement
+    python scripts/optimize_strategy.py session_breakout
 
 Design choices made once, up front, and held fixed across every experiment
 in this run (never tuned post-hoc after seeing results — that would be
@@ -81,6 +83,13 @@ from core.strategies.ict.ict_strategy import (
 from core.strategies.ict.ict_strategy import (
     GATE_PREMIUM_DISCOUNT as ICT_GATE_PREMIUM_DISCOUNT,
 )
+from core.strategies.session_breakout.session_breakout_strategy import (
+    GATE_DISPLACEMENT as SB_GATE_DISPLACEMENT,
+)
+from core.strategies.session_breakout.session_breakout_strategy import (
+    GATE_SESSION_WINDOW,
+    SessionBreakoutStrategy,
+)
 from core.strategies.smc.smc_strategy import (
     GATE_DISPLACEMENT as SMC_GATE_DISPLACEMENT,
 )
@@ -93,6 +102,18 @@ from core.strategies.smc.smc_strategy import (
 )
 from core.strategies.smc.smc_strategy import (
     GATE_PREMIUM_DISCOUNT as SMC_GATE_PREMIUM_DISCOUNT,
+)
+from core.strategies.sweep_displacement.sweep_displacement_strategy import (
+    GATE_DISPLACEMENT as SD_GATE_DISPLACEMENT,
+)
+from core.strategies.sweep_displacement.sweep_displacement_strategy import (
+    GATE_ENTRY_ZONE as SD_GATE_ENTRY_ZONE,
+)
+from core.strategies.sweep_displacement.sweep_displacement_strategy import (
+    GATE_PREMIUM_DISCOUNT as SD_GATE_PREMIUM_DISCOUNT,
+)
+from core.strategies.sweep_displacement.sweep_displacement_strategy import (
+    SweepDisplacementStrategy,
 )
 from optimization.data_split import DataSplit, chronological_split
 from optimization.objective import PerformanceMetrics, composite_objective
@@ -143,6 +164,25 @@ STRATEGY_SPECS = {
             "premium_discount_gate": ICT_GATE_PREMIUM_DISCOUNT,
         },
         "n_random_samples": 18,
+    },
+    "sweep_displacement": {
+        "cls": SweepDisplacementStrategy,
+        "components": ["sweep_quality", "displacement_strength", "retracement_depth", "premium_discount_depth"],
+        "gates": {
+            "displacement_gate": SD_GATE_DISPLACEMENT,
+            "entry_zone_gate": SD_GATE_ENTRY_ZONE,
+            "premium_discount_gate": SD_GATE_PREMIUM_DISCOUNT,
+        },
+        "n_random_samples": 16,
+    },
+    "session_breakout": {
+        "cls": SessionBreakoutStrategy,
+        "components": ["range_quality", "breakout_strength", "displacement_strength", "session_timing"],
+        "gates": {
+            "session_window_gate": GATE_SESSION_WINDOW,
+            "displacement_gate": SB_GATE_DISPLACEMENT,
+        },
+        "n_random_samples": 16,
     },
 }
 
