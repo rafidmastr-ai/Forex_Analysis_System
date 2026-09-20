@@ -13,7 +13,7 @@ from core.algorithms.indicators.moving_average import ema, sma
 from core.algorithms.indicators.vwap import vwap
 from core.algorithms.structure.displacement import is_displacement_candle
 from core.algorithms.structure.fair_value_gap import find_fair_value_gaps
-from core.algorithms.structure.liquidity import find_liquidity_pools, is_liquidity_sweep, LiquidityPool
+from core.algorithms.structure.liquidity import find_liquidity_pools, is_liquidity_sweep
 from core.algorithms.structure.market_structure import detect_structure_events
 from core.algorithms.structure.order_blocks import find_order_blocks
 from core.algorithms.structure.premium_discount import premium_discount_zone

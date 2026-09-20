@@ -11,7 +11,6 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from core.context.analysis_context import AnalysisContext
-from core.market_data.models import Timeframe
 from core.signals.enums import StrategyCategory
 from core.signals.strategy_signal import StrategySignal
 

@@ -51,7 +51,7 @@ class MT5DataMarketDataProvider(MarketDataProvider):
         server = os.environ.get("MT5_SERVER")
         terminal_path = os.environ.get("MT5_TERMINAL_PATH")
 
-        if not all([login, password, server]):
+        if login is None or password is None or server is None:
             raise MT5ConnectionError(
                 "MT5_LOGIN, MT5_PASSWORD and MT5_SERVER must be set as environment variables."
             )

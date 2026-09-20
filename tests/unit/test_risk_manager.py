@@ -4,10 +4,9 @@ from core.market_data.models import Symbol
 from core.risk.risk_manager import RiskManager
 from core.risk.trade_plan import CapitalSource, LotSource
 from core.risk.user_capital import UserCapitalConfig
-from core.signals.enums import ConfidenceLabel, Direction
+from core.signals.enums import ConfidenceLabel, Direction, StrategyCategory
 from core.signals.selected_setup import SelectedSetup
 from core.signals.strategy_signal import PriceZone, StrategySignal
-from core.signals.enums import StrategyCategory
 
 SYMBOL = Symbol(name="EURUSD", pip_size=0.0001, digits=5, contract_size=100000)
 

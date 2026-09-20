@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+import core.strategies.bootstrap  # noqa: F401 — registers Classic/SMC/ICT on import
 from adapters.historical_file.file_adapter import HistoricalFileMarketDataProvider
 from adapters.mock.mock_adapter import MockMarketDataProvider
 from backend.config import Settings, get_settings
@@ -17,7 +18,6 @@ from core.market_data.provider_interface import MarketDataProvider
 from core.market_data.validation import ValidatingMarketDataProvider
 from core.risk.risk_manager import RiskManager
 from core.selection.strategy_selection_engine import StrategySelectionEngine
-import core.strategies.bootstrap  # noqa: F401 — registers Classic/SMC/ICT on import
 from core.strategies.registry import StrategyRegistry
 from core.strategies.registry import registry as _strategy_registry
 
@@ -27,6 +27,7 @@ def get_market_data_provider() -> MarketDataProvider:
     settings = get_settings()
     provider_name = settings.data_source_provider
 
+    base: MarketDataProvider
     if provider_name == "mock":
         base = MockMarketDataProvider()
     elif provider_name == "historical_file":
@@ -34,8 +35,9 @@ def get_market_data_provider() -> MarketDataProvider:
     elif provider_name == "mt5":
         from adapters.mt5.mt5_data_adapter import MT5DataMarketDataProvider
 
-        base = MT5DataMarketDataProvider()
-        base.connect()
+        mt5_provider = MT5DataMarketDataProvider()
+        mt5_provider.connect()
+        base = mt5_provider
     else:
         raise ValueError(f"unknown data_source.provider: {provider_name}")
 

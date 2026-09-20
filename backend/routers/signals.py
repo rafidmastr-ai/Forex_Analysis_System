@@ -64,6 +64,7 @@ def _validate_risk_and_lot(payload: AnalyzeRequest, settings: Settings) -> None:
         )
 
     if payload.lot_mode == "MANUAL":
+        assert payload.lot_size is not None  # guaranteed by the check above
         lots_cfg = settings.lots
         if payload.lot_size <= 0:
             raise HTTPException(status_code=422, detail="lot_size must be positive")

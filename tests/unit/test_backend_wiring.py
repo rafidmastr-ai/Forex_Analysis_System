@@ -20,6 +20,7 @@ def test_importing_backend_dependencies_registers_all_three_strategies():
 def test_strategies_endpoint_lists_all_three(monkeypatch):
     monkeypatch.setenv("APP_ENV", "dev")
     from fastapi.testclient import TestClient
+
     from backend.main import app
 
     client = TestClient(app)

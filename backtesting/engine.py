@@ -16,7 +16,7 @@ from datetime import datetime
 from backtesting.run_config import BacktestRunConfig
 from core.context.analysis_context import AnalysisContext
 from core.context.timeframe_selector import TimeframeSelector
-from core.market_data.models import CandleSeries, Symbol
+from core.market_data.models import Symbol
 from core.market_data.provider_interface import MarketDataProvider
 from core.selection.strategy_selection_engine import StrategySelectionEngine
 from core.signals.enums import Direction, SetupStatus

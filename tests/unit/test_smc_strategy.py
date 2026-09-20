@@ -147,8 +147,8 @@ def test_smc_insufficient_lookback_returns_none(monkeypatch):
 
 
 def test_smc_strategy_is_registered():
-    from core.strategies.registry import registry
     import core.strategies.smc  # noqa: F401
+    from core.strategies.registry import registry
 
     ids = [m.strategy_id for m in registry.all()]
     assert "smc_structure_ob_fvg" in ids

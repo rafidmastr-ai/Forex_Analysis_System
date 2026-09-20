@@ -22,9 +22,9 @@ def _uptrend_with_pullback_context() -> AnalysisContext:
         if i % 15 == 0 and i > 0:
             price -= 0.0020
         o = price - 0.0003
-        h = max(o, price) + 0.0003
-        l = min(o, price) - 0.0003
-        candles.append(Candle(timestamp=BASE + timedelta(minutes=i), open=o, high=h, low=l, close=price, volume=100))
+        hi = max(o, price) + 0.0003
+        lo = min(o, price) - 0.0003
+        candles.append(Candle(timestamp=BASE + timedelta(minutes=i), open=o, high=hi, low=lo, close=price, volume=100))
 
     last_low = max((s for s in find_swing_points(candles, lookback=2) if s.kind == "low"), key=lambda s: s.timestamp)
     support = last_low.price
@@ -77,8 +77,8 @@ def test_classic_strategy_returns_none_when_ranging():
 
 
 def test_classic_strategy_is_registered():
-    from core.strategies.registry import registry
     import core.strategies.classic  # noqa: F401 — triggers registration
+    from core.strategies.registry import registry
 
     ids = [m.strategy_id for m in registry.all()]
     assert "classic_sr_trend_fib" in ids

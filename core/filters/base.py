@@ -6,8 +6,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from core.context.analysis_context import AnalysisContext
+
+if TYPE_CHECKING:
+    from core.signals.strategy_signal import StrategySignal
 
 
 @dataclass
@@ -21,5 +25,5 @@ class BaseFilter(ABC):
     name: str
 
     @abstractmethod
-    def apply(self, signal: "StrategySignal", context: AnalysisContext) -> FilterResult:  # noqa: F821
+    def apply(self, signal: StrategySignal, context: AnalysisContext) -> FilterResult:
         ...

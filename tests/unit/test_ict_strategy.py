@@ -141,8 +141,8 @@ def test_ict_no_structure_events_returns_none(monkeypatch):
 
 
 def test_ict_strategy_is_registered():
-    from core.strategies.registry import registry
     import core.strategies.ict  # noqa: F401
+    from core.strategies.registry import registry
 
     ids = [m.strategy_id for m in registry.all()]
     assert "ict_ote_killzone" in ids

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from core.signals.enums import ConfidenceLabel, Direction, SetupStatus, StrategyCategory
+from core.signals.enums import ConfidenceLabel, Direction, SetupStatus
 from core.signals.strategy_signal import StrategySignal
 
 

@@ -1,10 +1,9 @@
 from datetime import datetime, timedelta, timezone
 
-from core.market_data.models import Timeframe
+from core.market_data.models import Symbol, Timeframe
 from core.results.analysis_result import AnalysisResult, AnalysisStatus
 from core.risk.risk_manager import RiskManager
 from core.risk.trade_plan import LotSource
-from core.market_data.models import Symbol
 from core.signals.enums import ConfidenceLabel, Direction, StrategyCategory
 from core.signals.selected_setup import SelectedSetup
 from core.signals.strategy_signal import PriceZone, StrategySignal
