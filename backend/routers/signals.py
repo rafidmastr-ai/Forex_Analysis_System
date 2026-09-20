@@ -49,6 +49,33 @@ class AnalyzeRequest(BaseModel):
     lot_size: float | None = None
 
 
+def _validate_risk_and_lot(payload: AnalyzeRequest, settings: Settings) -> None:
+    if payload.lot_mode == "MANUAL" and payload.lot_size is None:
+        raise HTTPException(status_code=422, detail="lot_size is required when lot_mode is MANUAL")
+
+    risk_cfg = settings.risk
+    if payload.risk_percent <= 0:
+        raise HTTPException(status_code=422, detail="risk_percent must be positive")
+    if payload.risk_percent not in risk_cfg["presets_percent"] and not risk_cfg["allow_custom_risk_percent"]:
+        raise HTTPException(
+            status_code=422,
+            detail=f"risk_percent must be one of {risk_cfg['presets_percent']} (custom values are disabled)",
+        )
+
+    if payload.lot_mode == "MANUAL":
+        lots_cfg = settings.lots
+        if payload.lot_size <= 0:
+            raise HTTPException(status_code=422, detail="lot_size must be positive")
+        if payload.lot_size not in lots_cfg["presets"] and not lots_cfg["allow_custom_lot"]:
+            raise HTTPException(
+                status_code=422,
+                detail=f"lot_size must be one of {lots_cfg['presets']} (custom values are disabled)",
+            )
+
+    if payload.capital is not None and payload.capital <= 0:
+        raise HTTPException(status_code=422, detail="capital must be positive when provided")
+
+
 @router.post("/analyze")
 def analyze(
     payload: AnalyzeRequest,
@@ -58,8 +85,7 @@ def analyze(
     risk_manager=Depends(get_risk_manager),
     settings: Settings = Depends(get_settings_dep),
 ):
-    if payload.lot_mode == "MANUAL" and payload.lot_size is None:
-        raise HTTPException(status_code=422, detail="lot_size is required when lot_mode is MANUAL")
+    _validate_risk_and_lot(payload, settings)
 
     try:
         symbol = provider.get_symbol_info(payload.symbol)
