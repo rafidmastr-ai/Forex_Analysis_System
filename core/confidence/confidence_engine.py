@@ -22,14 +22,15 @@ class ConfidenceEngine:
         primary: StrategySignal,
         agreeing: list[StrategySignal],
         filter_adjustment: int = 0,
-    ) -> tuple[int, ConfidenceLabel, dict[str, bool]]:
+    ) -> tuple[int, ConfidenceLabel, dict[str, bool], list[str]]:
         base = int(primary.raw_score_components.get("base_confidence", 50))
-        base += self._agreement_bonus * len(agreeing)
+        base += self._agreement_bonus * len(agreeing)  # counted once per agreeing strategy, never per rationale line
         base += filter_adjustment
         score = max(0, min(100, base))
         label = self._label(score)
         breakdown = self._breakdown(primary, agreeing)
-        return score, label, breakdown
+        reasons = self._reasons(primary, agreeing)
+        return score, label, breakdown, reasons
 
     def _label(self, score: int) -> ConfidenceLabel:
         if score <= self._weak_max:
@@ -55,3 +56,17 @@ class ConfidenceEngine:
         for key in ("trend_alignment", "liquidity_confirmation", "fvg_confirmation"):
             breakdown[key] = any(bool(s.raw_score_components.get(key)) for s in contributors)
         return breakdown
+
+    @staticmethod
+    def _reasons(primary: StrategySignal, agreeing: list[StrategySignal]) -> list[str]:
+        """Human-readable evidence backing the score — each distinct piece
+        of rationale counted once even if multiple contributing strategies
+        happen to state it identically (no double counting)."""
+        reasons: list[str] = []
+        seen: set[str] = set()
+        for signal in (primary, *agreeing):
+            for line in signal.rationale:
+                if line not in seen:
+                    seen.add(line)
+                    reasons.append(line)
+        return reasons

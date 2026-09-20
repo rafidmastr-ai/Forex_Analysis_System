@@ -34,9 +34,14 @@ class SelectedSetup:
     confidence_score: int  # 0-100 — a relative confidence score, NOT a win probability
     confidence_label: ConfidenceLabel
     confidence_breakdown: dict[str, bool] = field(default_factory=dict)
+    confidence_reasons: list[str] = field(default_factory=list)
 
     timeframe_used: TimeframeUsed | None = None
     status: SetupStatus = SetupStatus.SELECTED
+
+    @property
+    def contributing_signals(self) -> list[StrategySignal]:
+        return [self.winning_signal, *self.agreeing_signals]
 
     @property
     def selected_strategy_display(self) -> str:

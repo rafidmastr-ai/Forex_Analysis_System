@@ -78,7 +78,7 @@ class StrategySelectionEngine:
             same_direction, key=lambda s: s.raw_score_components.get("base_confidence", 0), reverse=True
         )
         filter_adjustment = int(primary.raw_score_components.get("_filter_adjustment", 0))
-        score, label, breakdown = self._confidence_engine.score_group(primary, agreeing, filter_adjustment)
+        score, label, breakdown, reasons = self._confidence_engine.score_group(primary, agreeing, filter_adjustment)
 
         return SelectedSetup(
             winning_signal=primary,
@@ -92,6 +92,7 @@ class StrategySelectionEngine:
             confidence_score=score,
             confidence_label=label,
             confidence_breakdown=breakdown,
+            confidence_reasons=reasons,
             timeframe_used=TimeframeUsed(
                 higher=context.higher_timeframe.timeframe.value,
                 middle=context.middle_timeframe.timeframe.value,

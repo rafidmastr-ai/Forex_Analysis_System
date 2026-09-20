@@ -82,7 +82,6 @@ class AnalysisResult:
         valid_until: datetime,
     ) -> "AnalysisResult":
         setup = trade_plan.setup_ref
-        reasons = [key.replace("_", " ") for key, confirmed in setup.confidence_breakdown.items() if confirmed]
         return cls(
             symbol=symbol,
             direction=setup.direction,
@@ -91,7 +90,7 @@ class AnalysisResult:
             conflicting_strategies=sorted({s.category.value for s in setup.conflicting_signals}),
             confidence_score=setup.confidence_score,
             confidence_label=setup.confidence_label,
-            confidence_reasons=reasons,
+            confidence_reasons=setup.confidence_reasons,
             timeframe_used={
                 "higher": setup.timeframe_used.higher,
                 "middle": setup.timeframe_used.middle,
