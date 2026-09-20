@@ -78,6 +78,21 @@ def _patch_common(monkeypatch, *, pool_kind="buy_side", displacement=True, fvg_d
     return pool, expected_direction
 
 
+def test_default_weights_are_the_robust_candidate_from_optimization():
+    """Regression pin: DEFAULT_WEIGHTS was updated from an equal-split
+    prior to the Robust Candidate found by scripts/optimize_strategy.py
+    (see the module docstring for full provenance/caveats). Any future
+    re-optimization must go through that same pipeline before changing
+    this value -- this test just catches an accidental/silent edit."""
+    weights = sd_module.SweepDisplacementStrategy.DEFAULT_WEIGHTS.weights
+    assert weights == {
+        "sweep_quality": 0.030116665215829466,
+        "displacement_strength": 0.4391532641574131,
+        "retracement_depth": 0.35259408275584475,
+        "premium_discount_depth": 0.17813598787091264,
+    }
+
+
 def test_no_trade_when_no_sweep_found(monkeypatch):
     swings = [
         SwingPoint(index=10, timestamp=BASE, price=1.1050, kind="high"),

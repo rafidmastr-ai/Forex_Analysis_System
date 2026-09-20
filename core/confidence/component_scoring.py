@@ -30,10 +30,35 @@ class ComponentWeights:
 
     def perturbed(self, name: str, factor: float) -> "ComponentWeights":
         """Returns a copy with one component's weight scaled by `factor`
-        (e.g. 1.10 for +10%) — used by the robustness/perturbation test."""
+        (e.g. 1.10 for +10%) — used by the robustness/perturbation test.
+
+        BLIND SPOT (found during the Session Breakout robustness run, see
+        research/STRATEGY_RESEARCH_REGISTRY.md): `weighted_score()`
+        renormalizes over active components, so when exactly one component
+        has nonzero weight (a pure vertex of the search simplex), scaling
+        that lone weight by ANY factor and renormalizing always returns
+        1.0 — this method is a mathematical no-op for vertex candidates,
+        not evidence of genuine robustness. It remains valid and meaningful
+        whenever 2+ components are simultaneously nonzero (the relative
+        share between them does change). Use `perturbed_toward()` instead
+        when a candidate might be a pure vertex — the optimization driver
+        (scripts/optimize_strategy.py) now always uses that one."""
         updated = dict(self.weights)
         if name in updated:
             updated[name] = updated[name] * factor
+        return ComponentWeights(updated)
+
+    def perturbed_toward(self, from_name: str, to_name: str, fraction: float) -> "ComponentWeights":
+        """Returns a copy with `fraction` of `from_name`'s weight moved to
+        `to_name` — a redistribution on the simplex rather than a rescale,
+        so it produces a genuine change even when `from_name` is the only
+        nonzero component (unlike `perturbed()`, see its docstring). This
+        is the robustness/perturbation primitive the optimization driver
+        actually uses."""
+        updated = dict(self.weights)
+        moved = updated.get(from_name, 0.0) * fraction
+        updated[from_name] = updated.get(from_name, 0.0) - moved
+        updated[to_name] = updated.get(to_name, 0.0) + moved
         return ComponentWeights(updated)
 
 

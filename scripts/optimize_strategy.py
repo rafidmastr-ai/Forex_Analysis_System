@@ -122,7 +122,7 @@ from optimization.runner import evaluate_metrics
 from optimization.weight_search import random_search
 
 MIN_CONFIDENCE = 65
-PERTURBATION_FACTORS = [0.85, 0.90, 0.95, 1.05, 1.10, 1.15]
+PERTURBATION_FRACTIONS = [0.05, 0.10, 0.15]  # how much weight to redistribute, tested at each step
 TOP_K_TO_VALIDATE = 3
 DATASET = "mt5_2025_2026"
 
@@ -290,18 +290,31 @@ def run(strategy_key: str) -> dict:
     print(f"[candidate/oos] resolved={oos_metrics.resolved_count} net_r={oos_metrics.net_r:.2f} obj={oos_obj:.3f}", flush=True)
 
     # --- Robustness / perturbation (on VALIDATION) ---
+    # Uses ComponentWeights.perturbed_toward() (weight REDISTRIBUTION), not
+    # .perturbed() (weight RESCALING): weighted_score() renormalizes over
+    # active components, so rescaling the only nonzero weight of a pure-
+    # vertex candidate and renormalizing is a mathematical no-op (always
+    # returns to the same normalized weight) -- found while running this
+    # exact script on session_breakout's candidate, which landed on a pure
+    # vertex. Redistribution moves real weight onto every OTHER component
+    # (including ones currently at zero), which is a genuine test of
+    # whether the candidate's shape is stable, for vertex and non-vertex
+    # candidates alike. See core/confidence/component_scoring.py's
+    # docstrings and research/STRATEGY_RESEARCH_REGISTRY.md for the story.
     print("=== perturbation robustness (on VALIDATION) ===", flush=True)
     perturbation_objs = []
-    for name, w in chosen_weights.weights.items():
-        if w <= 0:
-            continue
-        for factor in PERTURBATION_FACTORS:
-            pw = chosen_weights.perturbed(name, factor)
-            pm = evaluate(strategy_cls(weights=pw), "EURUSD", *split.validation)
-            pobj = composite_objective(pm)
-            perturbation_objs.append(pobj)
-            _record(registry, strategy_id, "EURUSD", split, "perturbation", pw, [], pm, "Candidate",
-                    notes=f"perturbed component={name} factor={factor}")
+    donors = [name for name, w in chosen_weights.weights.items() if w > 0]
+    for donor in donors:
+        for receiver in components:
+            if receiver == donor:
+                continue
+            for fraction in PERTURBATION_FRACTIONS:
+                pw = chosen_weights.perturbed_toward(donor, receiver, fraction)
+                pm = evaluate(strategy_cls(weights=pw), "EURUSD", *split.validation)
+                pobj = composite_objective(pm)
+                perturbation_objs.append(pobj)
+                _record(registry, strategy_id, "EURUSD", split, "perturbation", pw, [], pm, "Candidate",
+                        notes=f"moved {fraction:.0%} of weight from {donor} to {receiver}")
     min_perturbed = min(perturbation_objs) if perturbation_objs else chosen_val_obj
     mean_perturbed = sum(perturbation_objs) / len(perturbation_objs) if perturbation_objs else chosen_val_obj
     print(f"perturbation validation-objective range: min={min_perturbed:.3f} mean={mean_perturbed:.3f} (unperturbed={chosen_val_obj:.3f})", flush=True)

@@ -31,14 +31,31 @@ ATR-based projection — never a fixed R:R multiple, consistent with every
 other strategy in this project.
 
 Confidence scoring follows the same independent-component pattern as
-Classic/SMC/ICT (`core.confidence.component_scoring`). Unlike those three,
-this is a BRAND NEW strategy with no legacy arithmetic to reproduce, so
-`DEFAULT_WEIGHTS` starts from an equal split across all four scorable
-components — the least-presumptive prior, deliberately not hand-tuned,
-per the research spec's "no theoretical weights" requirement. Actual
-weights are only ever adopted after the same Train/Validation/OOS/
-perturbation pipeline used for Classic/SMC/ICT (see scripts/
-optimize_strategy.py).
+Classic/SMC/ICT (`core.confidence.component_scoring`).
+
+DEFAULT_WEIGHTS provenance: this strategy started from an equal split
+across all four components (the least-presumptive prior — no legacy
+arithmetic existed to reproduce). That prior was then run through the
+exact same bounded Train/Validation/OOS/perturbation/ablation/cross-symbol
+pipeline used for Classic/SMC/ICT (scripts/optimize_strategy.py,
+min_confidence=65, 2025-09-15..2026-09-16 EURUSD split), and the resulting
+candidate weights below PASSED EVERY CHECK in the 8-point acceptance rule
+(scripts/classify_optimization_result.py) -- improved Train (-14.65 vs
+-45.99 baseline), held in Validation (-1.60 vs -6.91), reasonable OOS
+(-4.35 vs -24.89 baseline), no perturbation collapse (drop 1.0 vs a 3.2
+margin), sufficient trades. Classified **Robust Candidate** (never "best
+strategy") and adopted here as DEFAULT_WEIGHTS per research spec §19.
+
+IMPORTANT CAVEAT, stated plainly rather than buried: "Robust Candidate"
+means these weights are more defensible than an arbitrary equal-split
+guess and held up under the same rigor applied to every other strategy in
+this project -- it does NOT mean this strategy is profitable in absolute
+terms. Out-of-sample net R was still -9.00R over 9 trades; XAUUSD
+cross-symbol evidence was mixed (positive on only 1 of 3 phases). See
+research/STRATEGY_RESEARCH_REGISTRY.md and
+data/optimization_results/sweep_displacement_summary.json for the full
+numbers. Any future re-optimization must still go through the same
+pipeline before its weights replace these.
 """
 from __future__ import annotations
 
@@ -72,11 +89,13 @@ class SweepDisplacementStrategy(BaseStrategy):
     category = StrategyCategory.LIQUIDITY
     min_lookback_bars = 60
 
+    # Robust Candidate weights (see module docstring for the full
+    # provenance and caveats) -- replaces the original equal-split prior.
     DEFAULT_WEIGHTS = ComponentWeights({
-        "sweep_quality": 0.25,
-        "displacement_strength": 0.25,
-        "retracement_depth": 0.25,
-        "premium_discount_depth": 0.25,
+        "sweep_quality": 0.030116665215829466,
+        "displacement_strength": 0.4391532641574131,
+        "retracement_depth": 0.35259408275584475,
+        "premium_discount_depth": 0.17813598787091264,
     })
 
     def __init__(self, weights: ComponentWeights | None = None, disabled_components: frozenset[str] = frozenset()):
