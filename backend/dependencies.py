@@ -17,6 +17,7 @@ from core.market_data.provider_interface import MarketDataProvider
 from core.market_data.validation import ValidatingMarketDataProvider
 from core.risk.risk_manager import RiskManager
 from core.selection.strategy_selection_engine import StrategySelectionEngine
+import core.strategies.bootstrap  # noqa: F401 — registers Classic/SMC/ICT on import
 from core.strategies.registry import StrategyRegistry
 from core.strategies.registry import registry as _strategy_registry
 
