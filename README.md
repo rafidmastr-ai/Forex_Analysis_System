@@ -148,14 +148,37 @@ curl -X POST http://localhost:8000/backtest/run -H "Content-Type: application/js
 `strategy_set` accepts `Classic`, `SMC`, `ICT`, `Classic+SMC`, `Classic+ICT`,
 `SMC+ICT`, `All`, or `AllCombinations`. The engine is strictly Point-in-Time:
 at each simulated step, only candles closed at or before that step exist for
-the strategies (`CandleSeries.sliced_as_of`); future candles are used
-exclusively to score what happened to a signal already generated, never to
-decide whether to generate one (verified by
-`tests/unit/test_backtesting_engine.py`). No performance figure is invented
-— `/backtest/run` only returns numbers from an actual run over the data you
-give it, and the mock adapter's random-walk data has no real-world
-predictive meaning (use `historical_file` with real exported data for a
-meaningful result).
+the strategies (`CandleSeries.sliced_as_of`, and each timeframe role is
+additionally bounded to `config.data.lookback_bars` — the same window live
+`/analyze` uses); future candles are used exclusively to score what happened
+to a signal already generated, never to decide whether to generate one
+(verified by `tests/unit/test_backtesting_engine.py`). No performance figure
+is invented — `/backtest/run` only returns numbers from an actual run over
+the data you give it, and the mock adapter's random-walk data has no
+real-world predictive meaning.
+
+### Backtesting on real MT5-exported data
+
+```bash
+python3 scripts/convert_mt5_export.py <extracted_mt5_export_dir> data/historical
+APP_ENV=backtest ./scripts/run_backend_dev.sh   # config/settings.backtest.yaml: data_source.provider: historical_file
+```
+
+`scripts/convert_mt5_export.py` converts MT5's own tab-separated "Export
+bars" CSV into the format `HistoricalFileMarketDataProvider` expects
+(read the script's docstring for the exact column mapping). Two caveats
+that affect result interpretation, not correctness:
+- **Timezone**: MT5 exports carry no timezone. The converter tags
+  timestamps UTC only so the Data Validation Layer accepts them — evidence
+  in a real export (week boundaries at Monday 00:00 in the exported clock
+  instead of the real forex week's Sunday ~21-22:00 UTC open) suggests the
+  broker's actual server time is offset from UTC by a few hours. This
+  shifts which ICT Kill Zone a given bar appears to fall in; it does not
+  affect Point-in-Time correctness.
+- **Spread/tick data**: only OHLCV bars are converted; if the export has no
+  `_ticks.csv`, `get_ticks()` correctly returns an empty list rather than
+  failing — no strategy currently consumes tick-level data anyway (see
+  Limitations).
 
 ## Security
 
@@ -224,5 +247,52 @@ same `/analyze` contract).
   algorithm parameters, `train_range`/`test_range` on `BacktestRunConfig`,
   `confidence_breakdown` retained per setup) but not implemented as
   standalone tools yet.
+- `core/filters/base.py` defines the `BaseFilter` interface, but no
+  concrete filter (session/volatility/trend-alignment) is implemented —
+  `StrategySelectionEngine` is wired with `filters=[]` in production. Each
+  strategy's own gating logic (premium/discount, kill zones, displacement)
+  is the only filtering that currently happens.
+- `MarketDataProvider.get_ticks()` is implemented and tested on all three
+  adapters, but no strategy or algorithm consumes tick-level data yet —
+  everything operates on OHLCV candles.
+- `BacktestReport` reports a hit-rate (`win_rate_tp1_or_tp2`: the fraction
+  of setups that hit TP1 or TP2 before SL) and per-selected-strategy
+  breakdowns, not a P&L/equity curve or expectancy calculation — a lower
+  hit-rate does not by itself mean a strategy is unprofitable (TP2 is
+  often several times farther than SL), and this system does not compute
+  that number.
+
+## Baseline backtest results (real MT5-exported data, unoptimized)
+
+Run once against ~1 year (2025-09-15 to 2026-09-16) of real EURUSD/XAUUSD
+M15 data converted from an MT5 export, entirely on Linux Cloud. Reported
+exactly as produced — no strategy was tuned, removed, or re-run to improve
+these numbers, per the explicit instruction that weak results are recorded
+as-is for later analysis, not hidden:
+
+| Symbol | Strategy set | Setups | Hit rate (TP1 or TP2) |
+|---|---|---:|---:|
+| EURUSD | Classic | 1318 | 14.9% |
+| EURUSD | SMC | 536 | 23.7% |
+| EURUSD | ICT | 87 | 34.5% |
+| EURUSD | Classic+SMC | 1824 | 17.4% |
+| EURUSD | Classic+ICT | 1398 | 16.0% |
+| EURUSD | SMC+ICT | 527 | 24.9% |
+| EURUSD | All | 1813 | 17.7% |
+| XAUUSD | Classic | 1147 | 14.4% |
+| XAUUSD | SMC | 525 | 24.6% |
+| XAUUSD | ICT | 86 | 24.4% |
+| XAUUSD | Classic+SMC | 1622 | 17.7% |
+| XAUUSD | Classic+ICT | 1222 | 15.1% |
+| XAUUSD | SMC+ICT | 515 | 25.2% |
+| XAUUSD | All | 1614 | 17.8% |
+
+These are hit rates, not profitability — R:R varies per setup (the dynamic
+1.5+ floor), so a strategy hitting TP1/TP2 only ~15-25% of the time is not
+automatically a loser once actual reward:risk ratios are accounted for,
+which this baseline does not compute. Interpret this table as "the system
+runs end-to-end on real data and produces these counts," not as a
+performance verdict — that requires the P&L/expectancy work noted above,
+which was explicitly out of scope for this pass (no optimization yet).
 
 See `docs/architecture.md` for the full design this was built against.
