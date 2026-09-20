@@ -86,7 +86,8 @@ verify any claim directly; nothing here is taken as more certain than
 - **Strengths**: multiple independent, decades-old, foundational citations (Andersen & Bollerslev is a canonical volatility paper); directly corroborated by our OWN Task-37 regime/session breakdown (low-vol clearly outperforms high-vol on both EURUSD and XAUUSD).
 - **Weaknesses**: describes WHERE volatility concentrates, not that trading during/around it is profitable — a separate question our own backtests must answer.
 - **Can we rebuild it?**: **Yes** — directly operationalized as `core/filters/volatility_regime_filter.py` (regime side) and as the timing gate in `session_breakout_strategy.py` (session side).
-- **Status**: **Implemented** — see §2.
+- **Our own tested result**: ran a CURRENT-vs-MODIFIED comparison (`scripts/test_volatility_filter.py`, Task 45) — each strategy's own shipped `DEFAULT_WEIGHTS`, no confidence floor (matching real `/analyze`), with vs without `VolatilityRegimeFilter` — across Classic/SMC/ICT/sweep_displacement/session_breakout x EURUSD/XAUUSD x Train/Validation/OOS (30 comparisons). The filter improved the composite objective in 24 of 30 (80%); restricted to only the strategies actually registered in production (Classic/SMC/ICT/sweep_displacement — session_breakout was never adopted, see SRR-005/006), 21 of 24 (87.5%) improved, with the strongest and most consistent gains for Classic (+47.9/+5.4/+38.6 EURUSD, +37.6/-5.0/+15.9 XAUUSD) and SMC (positive in all 6). **Adopted**: wired into `backend/dependencies.py`'s production selection engine.
+- **Status**: **Implemented, Adopted** — see §2.
 
 ### SRR-005 — Opening Range Breakout (academic)
 - **Sources**: Holmberg, Lönnbark & Lundström, "Assessing the profitability of intraday opening range breakout strategies" (published, ScienceDirect / umu.se working paper); a cited 2023 5-minute-ORB study on index ETFs.
@@ -186,7 +187,7 @@ verify any claim directly; nothing here is taken as more certain than
 | Time Series Momentum (MA-slope continuation) | SRR-007 | — | — | N/A | N/A | N/A | OHLC | Research Candidate | Not started | — | — | — | — | Research Candidate |
 | RSI+Bollinger Mean Reversion | SRR-008 | — | — | N/A | N/A | N/A | OHLC | Research Candidate | Not started | — | — | — | — | Research Candidate |
 | False Breakout Reversal | SRR-009 | — | — | N/A | N/A | N/A | OHLC | Research Candidate | Not started | — | — | — | — | Research Candidate |
-| VolatilityRegimeFilter (cross-cutting) | SRR-004 (+ our own Task-37 finding) | EURUSD/XAUUSD | any | N/A (filter, not a strategy) | N/A | rejects "high" ATR-percentile regime | OHLC | Implemented | Testing (Task 45, in progress) | pending | pending | pending | pending | Testing |
+| VolatilityRegimeFilter (cross-cutting) | SRR-004 (+ our own Task-37 finding) | EURUSD/XAUUSD | any | N/A (filter, not a strategy) | N/A | rejects "high" ATR-percentile regime | OHLC | Implemented, adopted | Tested (Task 45) | n/a (filter, not searched) | n/a | 21/24 combos improved | n/a (deterministic filter, no weights to perturb) | **Adopted** (wired into `backend/dependencies.py`) |
 
 Pending rows will be filled in as Tasks 44-46 complete (this file is updated in place, not duplicated, as each phase finishes — see the git history for the evolution if needed).
 
