@@ -1,0 +1,77 @@
+# Windows + MT5 runtime configuration.
+# MT5 login/password/server are NEVER stored here — they are read from
+# environment variables by adapters/mt5/mt5_data_adapter.py at connect time.
+
+environment: windows
+
+data_source:
+  provider: mt5
+
+risk:
+  presets_percent: [0.25, 0.50, 1.00, 1.50, 2.00]
+  allow_custom_risk_percent: true
+  min_risk_reward: 1.5
+  max_risk_reward: null
+
+lots:
+  presets: [0.01, 0.02, 0.05, 0.10, 0.20, 0.50, 1.00]
+  allow_custom_lot: true
+
+confidence:
+  thresholds:
+    weak_max: 49
+    medium_max: 74
+    strong_min: 75
+  multi_strategy_agreement_bonus: 10
+
+timeframes:
+  default_mapping:
+    higher: H4
+    middle: H1
+    entry: M15
+  selection_rules:
+    - condition: high_volatility
+      entry: M5
+
+tp_rules:
+  sources: [support_resistance, liquidity, order_blocks, fvg, structure, fibonacci]
+
+sl_rules:
+  sources: [structure, order_blocks, atr]
+
+symbols:
+  - name: EURUSD
+    pip_size: 0.0001
+    digits: 5
+    contract_size: 100000
+  - name: GBPUSD
+    pip_size: 0.0001
+    digits: 5
+    contract_size: 100000
+  - name: XAUUSD
+    pip_size: 0.01
+    digits: 2
+    contract_size: 100
+
+session:
+  definitions:
+    Asian: { start_utc: "00:00", end_utc: "07:00" }
+    London: { start_utc: "07:00", end_utc: "12:00" }
+    NewYork: { start_utc: "12:00", end_utc: "17:00" }
+    LondonNewYorkOverlap: { start_utc: "12:00", end_utc: "16:00" }
+
+data:
+  lookback_bars:
+    higher: 200
+    middle: 300
+    entry: 500
+  max_spread:
+    EURUSD: 2.0
+    GBPUSD: 2.5
+    XAUUSD: 5.0
+
+analysis:
+  validity:
+    mode: entry_timeframe_multiple
+    bars_multiplier: 1
+    fixed_minutes: null

@@ -1,0 +1,8 @@
+[project]
+name = "forex-analysis-system"
+version = "0.1.0"
+description = "Multi-strategy (Classic/SMC/ICT) forex analysis engine with a pluggable market data layer."
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit", "tests/integration_mock"]

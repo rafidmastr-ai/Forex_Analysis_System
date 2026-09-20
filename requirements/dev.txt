@@ -1,0 +1,5 @@
+# Development/test tooling — Linux Cloud.
+-r base.txt
+pytest
+pytest-asyncio
+httpx

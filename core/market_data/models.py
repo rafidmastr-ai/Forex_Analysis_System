@@ -1,0 +1,90 @@
+"""Market data domain models.
+
+Pure data structures with zero knowledge of any data source. Nothing in
+this module may import MetaTrader5 or any adapter — Candle/Tick/CandleSeries
+are the common currency the whole system speaks.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+
+
+class Timeframe(str, Enum):
+    M1 = "M1"
+    M5 = "M5"
+    M15 = "M15"
+    M30 = "M30"
+    H1 = "H1"
+    H4 = "H4"
+    D1 = "D1"
+
+    @property
+    def minutes(self) -> int:
+        return {
+            Timeframe.M1: 1,
+            Timeframe.M5: 5,
+            Timeframe.M15: 15,
+            Timeframe.M30: 30,
+            Timeframe.H1: 60,
+            Timeframe.H4: 240,
+            Timeframe.D1: 1440,
+        }[self]
+
+
+@dataclass(frozen=True)
+class Symbol:
+    name: str
+    pip_size: float
+    digits: int
+    contract_size: float
+
+
+@dataclass(frozen=True)
+class Candle:
+    timestamp: datetime  # UTC, bar open time
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+    spread: float | None = None
+
+
+@dataclass
+class CandleSeries:
+    symbol: Symbol
+    timeframe: Timeframe
+    candles: list[Candle] = field(default_factory=list)
+
+    def __len__(self) -> int:
+        return len(self.candles)
+
+    def is_empty(self) -> bool:
+        return len(self.candles) == 0
+
+    def last(self) -> Candle | None:
+        return self.candles[-1] if self.candles else None
+
+    def sliced_as_of(self, as_of: datetime) -> "CandleSeries":
+        """Return only candles fully closed at or before `as_of`.
+
+        This is the single mechanism the whole system uses to avoid
+        look-ahead: nothing downstream should ever slice `.candles` by
+        hand.
+        """
+        visible = [c for c in self.candles if c.timestamp <= as_of]
+        return CandleSeries(symbol=self.symbol, timeframe=self.timeframe, candles=visible)
+
+
+@dataclass(frozen=True)
+class Tick:
+    timestamp: datetime  # UTC
+    bid: float
+    ask: float
+    volume: float = 0.0
+
+    @property
+    def spread(self) -> float:
+        return self.ask - self.bid
