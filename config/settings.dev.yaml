@@ -67,7 +67,7 @@ data:
     higher: 200
     middle: 300
     entry: 500
-  max_spread:
+  max_spread:  # in pips (converted to price units via each symbol's pip_size)
     EURUSD: 2.0
     GBPUSD: 2.5
     XAUUSD: 5.0

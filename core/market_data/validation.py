@@ -32,6 +32,11 @@ class ValidationReport:
 
 class ValidatingMarketDataProvider(MarketDataProvider):
     def __init__(self, wrapped: MarketDataProvider, max_spread_by_symbol: dict[str, float] | None = None):
+        """`max_spread_by_symbol` is in PIPS (matching config/settings.*.yaml
+        and how a trader naturally reads "max spread: 2.0"), converted to a
+        price-unit distance via each Symbol's own pip_size at comparison
+        time — `Candle.spread`/`Tick.spread` are always raw price units.
+        """
         self._wrapped = wrapped
         self._max_spread_by_symbol = max_spread_by_symbol or {}
         self.last_report: ValidationReport | None = None
@@ -104,12 +109,15 @@ class ValidatingMarketDataProvider(MarketDataProvider):
                 report.add(f"close outside [low, high] at {candle.timestamp}")
 
             # Spread sanity.
-            max_spread = self._max_spread_by_symbol.get(series.symbol.name)
+            max_spread_price = self._max_spread_price(series.symbol)
             if candle.spread is not None:
                 if candle.spread < 0:
                     report.add(f"CRITICAL: negative spread at {candle.timestamp}")
-                elif max_spread is not None and candle.spread > max_spread:
-                    report.add(f"spread {candle.spread} exceeds max {max_spread} at {candle.timestamp}")
+                elif max_spread_price is not None and candle.spread > max_spread_price:
+                    report.add(
+                        f"spread {candle.spread} exceeds max {max_spread_price} "
+                        f"({self._max_spread_by_symbol[series.symbol.name]} pips) at {candle.timestamp}"
+                    )
 
             # Ordering.
             if prev is not None and candle.timestamp < prev.timestamp:
@@ -126,11 +134,16 @@ class ValidatingMarketDataProvider(MarketDataProvider):
         return report
 
     def _validate_ticks(self, ticks: list[Tick], symbol: Symbol) -> None:
-        max_spread = self._max_spread_by_symbol.get(symbol.name)
+        max_spread_price = self._max_spread_price(symbol)
         for tick in ticks:
             if tick.ask < tick.bid:
                 raise DataQualityError(f"CRITICAL: ask < bid at {tick.timestamp}")
-            if max_spread is not None and tick.spread > max_spread:
+            if max_spread_price is not None and tick.spread > max_spread_price:
                 raise DataQualityError(
-                    f"CRITICAL: tick spread {tick.spread} exceeds max {max_spread} at {tick.timestamp}"
+                    f"CRITICAL: tick spread {tick.spread} exceeds max {max_spread_price} "
+                    f"({self._max_spread_by_symbol[symbol.name]} pips) at {tick.timestamp}"
                 )
+
+    def _max_spread_price(self, symbol: Symbol) -> float | None:
+        max_spread_pips = self._max_spread_by_symbol.get(symbol.name)
+        return max_spread_pips * symbol.pip_size if max_spread_pips is not None else None

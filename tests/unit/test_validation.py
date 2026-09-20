@@ -158,6 +158,24 @@ def test_spread_above_max_is_reported():
     assert any("exceeds max" in issue for issue in provider.last_report.issues)
 
 
+def test_max_spread_is_interpreted_in_pips_not_raw_price_units():
+    """Regression test: config/settings.*.yaml writes max_spread as pips
+    (e.g. EURUSD: 2.0 meaning 2 pips), matching how a trader reads it. A
+    3-pip spread (0.0003 for EURUSD, pip_size=0.0001) must be flagged
+    against a 2.0-pip limit; a 1-pip spread must not."""
+    three_pip_candle = _candle(0, spread=0.0003)
+    one_pip_candle = _candle(0, spread=0.0001)
+
+    flagged = ValidatingMarketDataProvider(_SeriesProvider(SYMBOL, [three_pip_candle]), max_spread_by_symbol={"EURUSD": 2.0})
+    clean = ValidatingMarketDataProvider(_SeriesProvider(SYMBOL, [one_pip_candle]), max_spread_by_symbol={"EURUSD": 2.0})
+
+    flagged.get_ohlcv(SYMBOL, Timeframe.M1, count=1)
+    clean.get_ohlcv(SYMBOL, Timeframe.M1, count=1)
+
+    assert any("exceeds max" in issue for issue in flagged.last_report.issues)
+    assert not any("exceeds max" in issue for issue in clean.last_report.issues)
+
+
 def test_empty_series_is_critical():
     provider = ValidatingMarketDataProvider(_SeriesProvider(SYMBOL, []))
 
