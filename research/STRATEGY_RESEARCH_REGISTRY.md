@@ -189,11 +189,46 @@ verify any claim directly; nothing here is taken as more certain than
 | False Breakout Reversal | SRR-009 | — | — | N/A | N/A | N/A | OHLC | Research Candidate | Not started | — | — | — | — | Research Candidate |
 | VolatilityRegimeFilter (cross-cutting) | SRR-004 (+ our own Task-37 finding) | EURUSD/XAUUSD | any | N/A (filter, not a strategy) | N/A | rejects "high" ATR-percentile regime | OHLC | Implemented, adopted | Tested (Task 45) | n/a (filter, not searched) | n/a | 21/24 combos improved | n/a (deterministic filter, no weights to perturb) | **Adopted** (wired into `backend/dependencies.py`) |
 
-Pending rows will be filled in as Tasks 44-46 complete (this file is updated in place, not duplicated, as each phase finishes — see the git history for the evolution if needed).
+All rows above are now final (Tasks 44-46 complete).
 
 ---
 
-## 3. Data-snooping control practices used in this phase
+## 3. Combination testing & independence check (Task 46)
+
+Extends Task 37's Classic/SMC/ICT-only combination set with the two new strategies: each alone, each existing strategy paired with each new one, and the full 5-strategy "All" — 12 bounded configurations (`scripts/optimize_combinations.py`), same `min_confidence=65`, full 2025-09-15→2026-09-16 window, both symbols.
+
+**Combining does not help here either** (same finding as Task 37 with the original three): every multi-strategy combination scored worse than its best single member on both symbols. EURUSD "All" (5 strategies): objective -44.87 vs ICT alone's -8.84 (the least-bad single strategy on EURUSD). XAUUSD "All": -50.06 vs SessionBreakout alone's **+1.44** (the only outright-positive single-strategy result found anywhere in this entire project, on 69 resolved trades) — pooling in the other four strategies erases that.
+
+**Independence check** (raw `analyze()` output, no selection engine/filters/confidence/RR floor — the literal technical signal): computed pairwise Jaccard overlap and direction-agreement-when-overlapping for all 10 strategy pairs, both symbols.
+
+| Pair | EURUSD Jaccard | EURUSD agree | XAUUSD Jaccard | XAUUSD agree |
+|---|---|---|---|---|
+| **SMC + ICT** | **0.231** | **1.00** | **0.215** | **1.00** |
+| Classic + SMC | 0.019 | 0.23 | 0.027 | 0.35 |
+| Classic + ICT | 0.006 | 0.29 | 0.009 | 0.25 |
+| Classic + SweepDisplacement | 0.025 | 0.35 | 0.031 | 0.21 |
+| Classic + SessionBreakout | 0.031 | 1.00 | 0.014 | 0.81 |
+| SMC + SweepDisplacement | 0.015 | 1.00 | 0.020 | 1.00 |
+| SMC + SessionBreakout | 0.007 | 0.14 | 0.001 | 0.00 |
+| ICT + SweepDisplacement | 0.019 | 1.00 | 0.008 | 1.00 |
+| ICT + SessionBreakout | 0.004 | 0.00 | 0.001 | 0.00 |
+| SweepDisplacement + SessionBreakout | 0.022 | 0.00 | 0.015 | 0.00 |
+
+**Finding, symbol-consistent and unambiguous: SMC and ICT are NOT independent evidence sources.** Their overlap (~10x higher than any other pair) and perfect direction agreement when they do overlap, on both symbols, confirms they are largely detecting the same underlying structural signal (both are built on Break-of-Structure + displacement + Fair Value Gap logic — ICT adds a Kill Zone timing gate and OTE depth on top of essentially the same core). Every other pair shows low overlap (Jaccard < 0.04) — Classic (trend + S/R pullback) is genuinely distinct from the structure-break family, and the two new strategies are genuinely distinct from all four others. Some pairs show 0% agreement when overlapping (ICT+SessionBreakout, SweepDisplacement+SessionBreakout on both symbols) — on the rare bars where both fire, they actively disagree on direction, the clearest possible evidence of independent (not merely uncorrelated) information.
+
+**Practical implication**: `ConfidenceEngine`'s multi-strategy agreement bonus currently treats every pairwise agreement as equally informative. Per this data, an SMC+ICT agreement is close to redundant (the same evidence counted twice), while a Classic+ICT or Classic+SMC agreement is far more likely to be genuinely independent confirmation. This is a real, evidence-based candidate for a future confidence-engine refinement (e.g., discount the agreement bonus for known-correlated pairs) — not implemented in this phase (would need its own Validation/OOS pass), but recorded here as the clearest actionable lead from the combination/independence work.
+
+---
+
+## 4. Multi-Timeframe confirmation (spec section 13)
+
+A direct code check (`grep -rn "higher_timeframe\|middle_timeframe" core/strategies/*/*.py`) found **zero** matches — none of the five strategies read `context.higher_timeframe` or `context.middle_timeframe` at all, despite `AnalysisContext` always carrying both. The Higher/Middle/Entry three-timeframe architecture has existed as unused plumbing for the Higher/Middle roles since the project's original design; only the Entry timeframe has ever driven a decision.
+
+Implemented `core/filters/htf_trend_alignment_filter.py` (`HTFTrendAlignmentFilter`) as a testable CURRENT-vs-MODIFIED comparison, per section 13's explicit instruction not to add HTF confirmation "just because it sounds logical." Reuses `detect_trend` (already used by Classic) on the higher-timeframe series; only rejects signals that actively conflict with a CLEAR higher-timeframe trend — a ranging or insufficient-history reading passes everything through. Results (CURRENT vs MODIFIED backtest comparison) are in the separate final report document, alongside every other Task 45/46 result.
+
+---
+
+## 5. Data-snooping control practices used in this phase
 
 1. **Reused, not redefined, OOS**: the same chronological Train(60%)/Validation(20%)/Out-of-Sample(20%) boundary over 2025-09-15→2026-09-16 established in the earlier weight-optimization phase is reused for every new strategy — never redrawn per-strategy, and never inspected before a candidate is fixed.
 2. **Everything logged**: every experiment (every weight sample, every ablation, every perturbation, every rejected strategy) is appended to `data/optimization_registry/experiments.jsonl` — nothing is filtered out of the record because it performed poorly.
