@@ -39,6 +39,14 @@ class ValidatingMarketDataProvider(MarketDataProvider):
     def is_connected(self) -> bool:
         return self._wrapped.is_connected()
 
+    def get_account_state(self):
+        """Passthrough for adapters that expose it (currently MT5 only).
+        Not part of the MarketDataProvider contract itself."""
+        getter = getattr(self._wrapped, "get_account_state", None)
+        if getter is None:
+            raise AttributeError("the active data source does not expose account state")
+        return getter()
+
     def get_symbol_info(self, symbol_name: str) -> Symbol:
         return self._wrapped.get_symbol_info(symbol_name)
 

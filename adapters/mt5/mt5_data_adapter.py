@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 
 from core.market_data.models import Candle, CandleSeries, Symbol, Tick, Timeframe
 from core.market_data.provider_interface import MarketDataProvider
+from core.risk.account_state import AccountState
 
 _TIMEFRAME_MAP_NAMES = {
     Timeframe.M1: "TIMEFRAME_M1",
@@ -71,7 +72,19 @@ class MT5DataMarketDataProvider(MarketDataProvider):
         info = self._require_mt5().symbol_info(symbol_name)
         if info is None:
             raise ValueError(f"symbol not found in MT5: {symbol_name}")
-        return Symbol(name=symbol_name, pip_size=info.point, digits=info.digits, contract_size=info.trade_contract_size)
+        # Real broker specs, never hardcoded, whenever MT5 data is available.
+        return Symbol(
+            name=symbol_name,
+            pip_size=info.point,
+            digits=info.digits,
+            contract_size=info.trade_contract_size,
+            tick_size=info.trade_tick_size,
+            tick_value=info.trade_tick_value,
+            volume_min=info.volume_min,
+            volume_max=info.volume_max,
+            volume_step=info.volume_step,
+            point=info.point,
+        )
 
     def get_ohlcv(self, symbol: Symbol, timeframe: Timeframe, count: int) -> CandleSeries:
         mt5 = self._require_mt5()
@@ -107,6 +120,16 @@ class MT5DataMarketDataProvider(MarketDataProvider):
             raise MT5ConnectionError(f"symbol_info_tick failed: {mt5.last_error()}")
         return Tick(timestamp=datetime.fromtimestamp(tick.time, tz=timezone.utc), bid=tick.bid, ask=tick.ask,
                     volume=float(tick.volume))
+
+    def get_account_state(self) -> AccountState:
+        """Not part of MarketDataProvider — only meaningful when MT5 is the
+        active source. Reflects the real broker account; never used as the
+        default capital basis for sizing (see core/risk/risk_manager.py)."""
+        mt5 = self._require_mt5()
+        info = mt5.account_info()
+        if info is None:
+            raise MT5ConnectionError(f"account_info failed: {mt5.last_error()}")
+        return AccountState(balance=info.balance, equity=info.equity, margin=info.margin, currency=info.currency)
 
     def _require_mt5(self):
         if self._mt5 is None:

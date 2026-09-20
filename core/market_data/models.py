@@ -39,6 +39,15 @@ class Symbol:
     pip_size: float
     digits: int
     contract_size: float
+    # Full broker specification. Optional so hand-built Symbols (mock data,
+    # tests, config defaults) keep working; adapters that have real specs
+    # (MT5) should always populate these rather than leaving them None.
+    tick_size: float | None = None
+    tick_value: float | None = None
+    volume_min: float | None = None
+    volume_max: float | None = None
+    volume_step: float | None = None
+    point: float | None = None
 
 
 @dataclass(frozen=True)
