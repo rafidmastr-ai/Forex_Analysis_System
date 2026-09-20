@@ -188,6 +188,7 @@ verify any claim directly; nothing here is taken as more certain than
 | RSI+Bollinger Mean Reversion | SRR-008 | — | — | N/A | N/A | N/A | OHLC | Research Candidate | Not started | — | — | — | — | Research Candidate |
 | False Breakout Reversal | SRR-009 | — | — | N/A | N/A | N/A | OHLC | Research Candidate | Not started | — | — | — | — | Research Candidate |
 | VolatilityRegimeFilter (cross-cutting) | SRR-004 (+ our own Task-37 finding) | EURUSD/XAUUSD | any | N/A (filter, not a strategy) | N/A | rejects "high" ATR-percentile regime | OHLC | Implemented, adopted | Tested (Task 45) | n/a (filter, not searched) | n/a | 21/24 combos improved | n/a (deterministic filter, no weights to perturb) | **Adopted** (wired into `backend/dependencies.py`) |
+| HTFTrendAlignmentFilter (cross-cutting) | spec section 13 (verified gap) | EURUSD/XAUUSD | any | N/A (filter, not a strategy) | N/A | rejects signals conflicting with a clear HTF trend | OHLC | Implemented, adopted | Tested (Task 45) | n/a (filter, not searched) | n/a | 28/30 combos improved alone; 25/30 with both filters combined | n/a (deterministic filter, no weights to perturb) | **Adopted** (wired into `backend/dependencies.py`; ICT nets slightly negative combined, accepted tradeoff) |
 
 All rows above are now final (Tasks 44-46 complete).
 
@@ -224,7 +225,13 @@ Extends Task 37's Classic/SMC/ICT-only combination set with the two new strategi
 
 A direct code check (`grep -rn "higher_timeframe\|middle_timeframe" core/strategies/*/*.py`) found **zero** matches — none of the five strategies read `context.higher_timeframe` or `context.middle_timeframe` at all, despite `AnalysisContext` always carrying both. The Higher/Middle/Entry three-timeframe architecture has existed as unused plumbing for the Higher/Middle roles since the project's original design; only the Entry timeframe has ever driven a decision.
 
-Implemented `core/filters/htf_trend_alignment_filter.py` (`HTFTrendAlignmentFilter`) as a testable CURRENT-vs-MODIFIED comparison, per section 13's explicit instruction not to add HTF confirmation "just because it sounds logical." Reuses `detect_trend` (already used by Classic) on the higher-timeframe series; only rejects signals that actively conflict with a CLEAR higher-timeframe trend — a ranging or insufficient-history reading passes everything through. Results (CURRENT vs MODIFIED backtest comparison) are in the separate final report document, alongside every other Task 45/46 result.
+Implemented `core/filters/htf_trend_alignment_filter.py` (`HTFTrendAlignmentFilter`) as a testable CURRENT-vs-MODIFIED comparison, per section 13's explicit instruction not to add HTF confirmation "just because it sounds logical." Reuses `detect_trend` (already used by Classic) on the higher-timeframe series; only rejects signals that actively conflict with a CLEAR higher-timeframe trend — a ranging or insufficient-history reading passes everything through.
+
+**Result**: improved the composite objective in 28 of 30 strategy x symbol x period combinations (`scripts/test_volatility_filter.py htf`) — even stronger and more consistent than VolatilityRegimeFilter alone (24/30). Classic and SMC: 6/6 positive each, with Classic gaining +20 to +79 objective points per period. sweep_displacement: 6/6 positive. session_breakout: 6/6 positive. ICT: 4/6 positive (2 small negative points, EURUSD OOS -1.50 and XAUUSD train -8.50).
+
+**Combined-filter check**: before wiring both VolatilityRegimeFilter and HTFTrendAlignmentFilter into production together, ran the specific combined configuration (not just each validated independently) — 25/30 combinations still improve. Classic/SMC/sweep_displacement remain strongly positive in every case; **ICT nets slightly negative in aggregate under the combined configuration** (3/6 positive, 3/6 negative, including one period collapsing to 0 resolved trades) — the compounding of two independent gates on an already-low-frequency strategy. Documented as an accepted, monitored tradeoff rather than hidden: Classic/SMC/sweep_displacement's gains far outweigh ICT's loss, and the architecture applies one shared filter list across all registered strategies (no per-strategy filter mechanism exists).
+
+**Adopted**: both filters wired into `backend/dependencies.py`'s production selection engine.
 
 ---
 
