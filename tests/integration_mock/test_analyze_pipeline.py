@@ -35,7 +35,7 @@ from backend.dependencies import (
     get_strategy_registry,
 )
 from backend.main import app
-from core.market_data.models import Candle, CandleSeries, Symbol, Tick
+from core.market_data.models import Candle, CandleSeries, Symbol, Tick, Timeframe
 from core.market_data.provider_interface import MarketDataProvider
 from core.market_data.validation import ValidatingMarketDataProvider
 from core.selection.strategy_selection_engine import StrategySelectionEngine
@@ -393,6 +393,57 @@ def test_volatility_filter_rejects_signal_through_the_real_endpoint():
     app.dependency_overrides[get_market_data_provider] = lambda: ValidatingMarketDataProvider(_HighVolatilityProvider())
     app.dependency_overrides[get_strategy_registry] = lambda: _FixedRegistry(
         [_fixed_strategy("classic_x", StrategyCategory.CLASSIC, Direction.BUY, 1.1000, 1.0950, 1.1075, 1.1150)]
+    )
+
+    resp = client.post("/analyze", json=_default_payload())
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "NO_SETUP_FOUND"
+
+
+class _ConflictingHTFTrendProvider(MarketDataProvider):
+    """Calm (low-volatility) M15/H1 candles throughout -- so the OTHER
+    production filter (VolatilityRegimeFilter) never fires here, isolating
+    this test to HTFTrendAlignmentFilter specifically -- but a clearly
+    rising H4 series, so a SELL signal conflicts with the higher-timeframe
+    uptrend."""
+
+    def is_connected(self):
+        return True
+
+    def get_symbol_info(self, symbol_name):
+        return Symbol(name=symbol_name, pip_size=0.0001, digits=5, contract_size=100000)
+
+    def get_ohlcv(self, symbol, timeframe, count):
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        if timeframe == Timeframe.H4:
+            candles, price = [], 1.1000
+            for i in range(80):
+                price += 0.0010
+                candles.append(Candle(timestamp=base + timedelta(hours=4 * i), open=price - 0.0005, high=price + 0.0005,
+                                       low=price - 0.0010, close=price, volume=100))
+        else:
+            candles = [
+                Candle(timestamp=base + timedelta(minutes=i), open=1.1000, high=1.1001, low=1.0999, close=1.1000, volume=100)
+                for i in range(200)
+            ]
+        return CandleSeries(symbol=symbol, timeframe=timeframe, candles=candles)
+
+    def get_ticks(self, symbol, start, end):
+        return []
+
+    def get_latest_tick(self, symbol):
+        return Tick(timestamp=datetime.now(timezone.utc), bid=1.1000, ask=1.1001)
+
+
+def test_htf_filter_rejects_conflicting_signal_through_the_real_endpoint():
+    """The other test proving the real production get_selection_engine()
+    (now [VolatilityRegimeFilter(), HTFTrendAlignmentFilter()]) actually
+    rejects on HTF conflict specifically, isolated from the volatility
+    filter by keeping M15/H1 calm throughout."""
+    app.dependency_overrides[get_market_data_provider] = lambda: ValidatingMarketDataProvider(_ConflictingHTFTrendProvider())
+    app.dependency_overrides[get_strategy_registry] = lambda: _FixedRegistry(
+        [_fixed_strategy("classic_x", StrategyCategory.CLASSIC, Direction.SELL, 1.1000, 1.1050, 1.0925, 1.0850)]
     )
 
     resp = client.post("/analyze", json=_default_payload())
