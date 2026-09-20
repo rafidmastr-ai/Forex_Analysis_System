@@ -6,7 +6,8 @@ from fastapi import APIRouter, Depends
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel
 
-from backend.dependencies import get_market_data_provider, get_selection_engine, get_strategy_registry
+from backend.config import Settings
+from backend.dependencies import get_market_data_provider, get_selection_engine, get_settings_dep, get_strategy_registry
 from backtesting.combinations_runner import run_all_combinations
 from backtesting.engine import BacktestEngine
 from backtesting.run_config import STRATEGY_COMBINATIONS, BacktestRunConfig
@@ -30,8 +31,10 @@ def list_strategy_sets():
 
 @router.post("/run")
 def run_backtest(payload: BacktestRequest, provider=Depends(get_market_data_provider),
-                  registry=Depends(get_strategy_registry), selection_engine=Depends(get_selection_engine)):
-    engine = BacktestEngine(provider=provider, registry=registry, selection_engine=selection_engine)
+                  registry=Depends(get_strategy_registry), selection_engine=Depends(get_selection_engine),
+                  settings: Settings = Depends(get_settings_dep)):
+    engine = BacktestEngine(provider=provider, registry=registry, selection_engine=selection_engine,
+                             timeframes_config=settings.timeframes)
 
     if payload.strategy_set == "AllCombinations":
         reports = run_all_combinations(engine, payload.symbol, Timeframe(payload.entry_timeframe), payload.start, payload.end)

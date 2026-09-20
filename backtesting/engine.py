@@ -15,6 +15,7 @@ from datetime import datetime
 
 from backtesting.run_config import BacktestRunConfig
 from core.context.analysis_context import AnalysisContext
+from core.context.timeframe_selector import TimeframeSelector
 from core.market_data.models import CandleSeries, Symbol
 from core.market_data.provider_interface import MarketDataProvider
 from core.selection.strategy_selection_engine import StrategySelectionEngine
@@ -53,19 +54,29 @@ class BacktestEngine:
         provider: MarketDataProvider,
         registry: StrategyRegistry,
         selection_engine: StrategySelectionEngine,
+        timeframes_config: dict | None = None,
     ):
         self._provider = provider
         self._registry = registry
         self._selection_engine = selection_engine
+        # Falls back to the entry timeframe for all three roles only if no
+        # config is supplied (keeps older call sites/tests working); real
+        # runs should always pass config.timeframes so Higher/Middle are
+        # genuinely different timeframes, not the entry series reused.
+        self._timeframes_config = timeframes_config
 
     def run(self, config: BacktestRunConfig) -> BacktestReport:
         symbol: Symbol = self._provider.get_symbol_info(config.symbol_name)
         entry_series = self._provider.get_ohlcv(symbol, config.entry_timeframe, count=100000)
-        # NOTE: the internal Higher/Middle timeframe selector (config.timeframes) is not
-        # wired in yet — this scaffold reuses the entry timeframe for all three roles.
-        # Replace once the TimeframeSelector component lands.
-        higher_series = self._provider.get_ohlcv(symbol, config.entry_timeframe, count=100000)
-        middle_series = self._provider.get_ohlcv(symbol, config.entry_timeframe, count=100000)
+
+        if self._timeframes_config is not None:
+            selector = TimeframeSelector(self._timeframes_config)
+            resolved = selector.select()
+            higher_series = self._provider.get_ohlcv(symbol, resolved.higher, count=100000)
+            middle_series = self._provider.get_ohlcv(symbol, resolved.middle, count=100000)
+        else:
+            higher_series = self._provider.get_ohlcv(symbol, config.entry_timeframe, count=100000)
+            middle_series = self._provider.get_ohlcv(symbol, config.entry_timeframe, count=100000)
 
         strategies = [s() for s in self._registry.enabled_by_category(config.categories)]
         report = BacktestReport(run_config=config)

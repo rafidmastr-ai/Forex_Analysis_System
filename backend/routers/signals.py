@@ -31,6 +31,7 @@ from backend.dependencies import (
     get_strategy_registry,
 )
 from core.context.analysis_context import AnalysisContext
+from core.context.timeframe_selector import TimeframeSelector, classify_volatility_from_candles
 from core.market_data.models import Timeframe
 from core.market_data.validation import DataQualityError
 from core.results.analysis_result import AnalysisResult
@@ -93,14 +94,22 @@ def analyze(
         raise HTTPException(status_code=404, detail=str(exc))
 
     now = datetime.now(timezone.utc)
-    tf_map = settings.timeframes["default_mapping"]
     lookback = settings.data["lookback_bars"]
+    selector = TimeframeSelector(settings.timeframes)
+    default_entry = Timeframe(settings.timeframes["default_mapping"]["entry"])
 
     try:
         latest_tick = provider.get_latest_tick(symbol)
-        higher = provider.get_ohlcv(symbol, Timeframe(tf_map["higher"]), lookback["higher"])
-        middle = provider.get_ohlcv(symbol, Timeframe(tf_map["middle"]), lookback["middle"])
-        entry = provider.get_ohlcv(symbol, Timeframe(tf_map["entry"]), lookback["entry"])
+        # First pass on the default entry timeframe to read current volatility,
+        # which may steer the selector to a different entry timeframe below —
+        # the user never chooses this, the system decides it internally.
+        probe_series = provider.get_ohlcv(symbol, default_entry, count=100)
+        volatility = classify_volatility_from_candles(probe_series.candles)
+        timeframes = selector.select(volatility=volatility)
+
+        higher = provider.get_ohlcv(symbol, timeframes.higher, lookback["higher"])
+        middle = provider.get_ohlcv(symbol, timeframes.middle, lookback["middle"])
+        entry = provider.get_ohlcv(symbol, timeframes.entry, lookback["entry"])
     except DataQualityError as exc:
         raise HTTPException(status_code=502, detail=f"Market data failed validation: {exc}")
 
@@ -142,7 +151,7 @@ def analyze(
     validity_cfg = settings.analysis["validity"]
     valid_until = AnalysisResult.compute_valid_until(
         created_at=now,
-        entry_timeframe_minutes=Timeframe(tf_map["entry"]).minutes,
+        entry_timeframe_minutes=timeframes.entry.minutes,
         bars_multiplier=validity_cfg["bars_multiplier"],
         fixed_minutes=validity_cfg["fixed_minutes"],
     )
