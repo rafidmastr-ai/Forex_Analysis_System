@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Forex Analysis System</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<header class="app-header">
+  <h1>Forex Analysis System</h1>
+  <button id="settingsToggle" class="icon-button" title="Backend connection settings" aria-label="Settings">⚙</button>
+</header>
+
+<section id="settingsPanel" class="panel hidden">
+  <label>
+    Backend API URL
+    <input id="apiBaseUrl" type="text" placeholder="https://your-backend-host:8000" />
+  </label>
+  <p class="hint">
+    The Web Interface never talks to MT5 directly — it only calls this Backend API,
+    which runs wherever MT5 is available (a Windows PC or VPS).
+  </p>
+  <button id="saveSettings">Save</button>
+</section>
+
+<main>
+  <section class="panel" id="formPanel">
+    <div class="field">
+      <label for="symbol">Trading pair</label>
+      <select id="symbol"></select>
+    </div>
+
+    <div class="field">
+      <label for="riskPercent">Risk % of capital</label>
+      <select id="riskPercent"></select>
+      <input id="riskPercentCustom" type="number" step="0.01" min="0" class="hidden" placeholder="Custom risk %" />
+    </div>
+
+    <div class="field">
+      <label for="capital">Capital (optional)</label>
+      <input id="capital" type="number" min="0" step="0.01" placeholder="e.g. 10000" />
+    </div>
+
+    <div class="field">
+      <label>Lot</label>
+      <div class="lot-mode-toggle">
+        <label><input type="radio" name="lotMode" value="AUTO" checked /> Auto Calculate</label>
+        <label><input type="radio" name="lotMode" value="MANUAL" /> Manual</label>
+      </div>
+      <select id="lotSize" class="hidden"></select>
+      <input id="lotSizeCustom" type="number" step="0.01" min="0" class="hidden" placeholder="Custom lot size" />
+    </div>
+
+    <button id="analyzeButton">Analyze</button>
+  </section>
+
+  <section class="panel" id="resultPanel">
+    <p class="placeholder">Enter your inputs and press Analyze.</p>
+  </section>
+
+  <p class="disclaimer">
+    This system provides a rules-based technical analysis and a signal — it does not
+    guarantee any trading outcome. Confidence Score is a relative measure of rule
+    confluence, not a probability of winning.
+  </p>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
