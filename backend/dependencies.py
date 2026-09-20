@@ -14,6 +14,7 @@ from adapters.historical_file.file_adapter import HistoricalFileMarketDataProvid
 from adapters.mock.mock_adapter import MockMarketDataProvider
 from backend.config import Settings, get_settings
 from core.confidence.confidence_engine import ConfidenceEngine
+from core.filters.volatility_regime_filter import VolatilityRegimeFilter
 from core.market_data.models import Symbol
 from core.market_data.provider_interface import MarketDataProvider
 from core.market_data.validation import ValidatingMarketDataProvider
@@ -77,7 +78,16 @@ def get_selection_engine() -> StrategySelectionEngine:
     settings = get_settings()
     return StrategySelectionEngine(
         confidence_engine=get_confidence_engine(),
-        filters=[],
+        # Adopted from a CURRENT-vs-MODIFIED backtest comparison (Task 45,
+        # scripts/test_volatility_filter.py): rejecting "high" ATR-percentile
+        # regime signals improved the composite objective in 21 of 24
+        # strategy x symbol x period combinations across every strategy
+        # actually registered in production (Classic, SMC, ICT,
+        # sweep_displacement) -- see research/STRATEGY_RESEARCH_REGISTRY.md
+        # and data/optimization_results/volatility_filter_comparison.json
+        # for the full numbers. Not a theoretical filter: it's the same
+        # regime-dependence finding from Task 37's own backtest data.
+        filters=[VolatilityRegimeFilter()],
         min_risk_reward=settings.risk["min_risk_reward"],
     )
 

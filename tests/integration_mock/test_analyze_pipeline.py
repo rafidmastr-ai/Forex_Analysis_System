@@ -5,20 +5,40 @@ AnalysisContext assembly, real ConfidenceEngine, real StrategySelectionEngine
 controllable fakes, via FastAPI dependency overrides. This is the layer
 above tests/unit/: it proves the pieces work TOGETHER through the API
 exactly as a client would call it, not just in isolation.
+
+The selection engine's FILTERS specifically are also overridden to empty
+(same confidence engine and min_risk_reward floor as production) for every
+test in this file except the one dedicated to it
+(test_volatility_filter_rejects_signal_through_the_real_endpoint): once
+VolatilityRegimeFilter was wired into production (Task 45, see
+backend/dependencies.py), MockMarketDataProvider's seeded random-walk data
+happened to classify as "high" volatility regime at these tests' fixed
+evaluation instant, silently swallowing every fixture signal these tests
+exist to check RR-math/confidence-aggregation/freshness-field behavior
+with — none of which is what they're testing, so isolating the filter
+here is the same reasoning as isolating the provider/registry, not a way
+to dodge the new behavior (which gets its own real, unoverridden test).
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
 
 from adapters.mock.mock_adapter import MockMarketDataProvider
-from backend.dependencies import get_market_data_provider, get_strategy_registry
+from backend.dependencies import (
+    get_confidence_engine,
+    get_market_data_provider,
+    get_selection_engine,
+    get_settings_dep,
+    get_strategy_registry,
+)
 from backend.main import app
 from core.market_data.models import Candle, CandleSeries, Symbol, Tick
 from core.market_data.provider_interface import MarketDataProvider
 from core.market_data.validation import ValidatingMarketDataProvider
+from core.selection.strategy_selection_engine import StrategySelectionEngine
 from core.signals.enums import Direction, StrategyCategory
 from core.signals.strategy_signal import PriceZone, StrategySignal
 from core.strategies.base import BaseStrategy
@@ -99,6 +119,11 @@ def _override_provider(base_provider):
 
 def _override_registry(strategies):
     app.dependency_overrides[get_strategy_registry] = lambda: _FixedRegistry(strategies)
+    # Real confidence engine and min_risk_reward floor, filters emptied — see the module
+    # docstring for why (isolating the volatility filter from unrelated mock-data fixtures).
+    app.dependency_overrides[get_selection_engine] = lambda: StrategySelectionEngine(
+        confidence_engine=get_confidence_engine(), filters=[], min_risk_reward=get_settings_dep().risk["min_risk_reward"],
+    )
 
 
 def _default_payload(**overrides):
@@ -321,3 +346,56 @@ def test_fresh_analysis_is_active_and_has_a_future_valid_until():
     assert isinstance(body["current_bid"], float)
     assert isinstance(body["current_ask"], float)
     assert body["spread"] == pytest.approx(body["current_ask"] - body["current_bid"], abs=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# VolatilityRegimeFilter really is wired into the production selection engine
+# ---------------------------------------------------------------------------
+
+class _HighVolatilityProvider(MarketDataProvider):
+    """40 tiny-range candles (ATR seed period) followed by 20 candles with
+    linearly growing range -- the tail ATR value ends up ranked highest in
+    its own trailing window, so core.algorithms.volatility.classify_volatility
+    reads "high" at the final candle. Verified directly against
+    classify_volatility before being used here."""
+
+    def is_connected(self):
+        return True
+
+    def get_symbol_info(self, symbol_name):
+        return Symbol(name=symbol_name, pip_size=0.0001, digits=5, contract_size=100000)
+
+    def get_ohlcv(self, symbol, timeframe, count):
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        candles = [
+            Candle(timestamp=base + timedelta(minutes=i), open=1.1000, high=1.1001, low=1.0999, close=1.1000, volume=100)
+            for i in range(40)
+        ]
+        for i in range(20):
+            r = 0.0005 + i * 0.0005
+            candles.append(Candle(timestamp=base + timedelta(minutes=40 + i), open=1.1000, high=1.1000 + r,
+                                   low=1.1000 - r, close=1.1000, volume=100))
+        return CandleSeries(symbol=symbol, timeframe=timeframe, candles=candles)
+
+    def get_ticks(self, symbol, start, end):
+        return []
+
+    def get_latest_tick(self, symbol):
+        return Tick(timestamp=datetime.now(timezone.utc), bid=1.1000, ask=1.1001)
+
+
+def test_volatility_filter_rejects_signal_through_the_real_endpoint():
+    """Unlike every other test in this file, the selection engine is NOT
+    overridden here -- this is the one test that exercises the real
+    production get_selection_engine() (Task 45: VolatilityRegimeFilter
+    wired into backend/dependencies.py) end-to-end through the actual
+    /analyze endpoint."""
+    app.dependency_overrides[get_market_data_provider] = lambda: ValidatingMarketDataProvider(_HighVolatilityProvider())
+    app.dependency_overrides[get_strategy_registry] = lambda: _FixedRegistry(
+        [_fixed_strategy("classic_x", StrategyCategory.CLASSIC, Direction.BUY, 1.1000, 1.0950, 1.1075, 1.1150)]
+    )
+
+    resp = client.post("/analyze", json=_default_payload())
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "NO_SETUP_FOUND"
