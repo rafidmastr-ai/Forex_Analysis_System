@@ -19,6 +19,7 @@ class Settings:
     def __init__(self, raw: dict):
         self.raw = raw
         self.environment: str = raw["environment"]
+        self.data_source: dict = raw["data_source"]
         self.data_source_provider: str = raw["data_source"]["provider"]
         self.risk: dict = raw["risk"]
         self.lots: dict = raw["lots"]

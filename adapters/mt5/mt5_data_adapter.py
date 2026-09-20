@@ -33,6 +33,16 @@ class MT5ConnectionError(Exception):
     pass
 
 
+def pip_size_from_point(point: float, digits: int) -> float:
+    """A "pip" is 10x a "point" on 3- and 5-digit-priced symbols (the extra
+    fractional digit brokers add), and equals the point on 2- and 4-digit
+    symbols. `Symbol.point` always holds the raw MT5 value; `Symbol.pip_size`
+    must hold the true pip so it means the same thing regardless of which
+    adapter produced the Symbol (Mock's hardcoded specs use true pips too).
+    """
+    return point * 10 if digits in (3, 5) else point
+
+
 class MT5DataMarketDataProvider(MarketDataProvider):
     def __init__(self):
         self._mt5 = None  # bound to the MetaTrader5 module once connected
@@ -75,7 +85,7 @@ class MT5DataMarketDataProvider(MarketDataProvider):
         # Real broker specs, never hardcoded, whenever MT5 data is available.
         return Symbol(
             name=symbol_name,
-            pip_size=info.point,
+            pip_size=pip_size_from_point(info.point, info.digits),
             digits=info.digits,
             contract_size=info.trade_contract_size,
             tick_size=info.trade_tick_size,
@@ -92,11 +102,15 @@ class MT5DataMarketDataProvider(MarketDataProvider):
         rates = mt5.copy_rates_from_pos(symbol.name, mt5_timeframe, 0, count)
         if rates is None:
             raise MT5ConnectionError(f"copy_rates_from_pos failed: {mt5.last_error()}")
+        # `symbol` is expected to come from this adapter's own get_symbol_info(),
+        # which always sets `point` — required to convert MT5's raw spread
+        # (reported in points) into an actual price-unit distance.
+        assert symbol.point is not None, "Symbol.point is required to convert MT5 spread points to price units"
         candles = [
             Candle(
                 timestamp=datetime.fromtimestamp(r["time"], tz=timezone.utc),
                 open=float(r["open"]), high=float(r["high"]), low=float(r["low"]), close=float(r["close"]),
-                volume=float(r["tick_volume"]), spread=float(r["spread"]) * symbol.pip_size,
+                volume=float(r["tick_volume"]), spread=float(r["spread"]) * symbol.point,
             )
             for r in rates
         ]

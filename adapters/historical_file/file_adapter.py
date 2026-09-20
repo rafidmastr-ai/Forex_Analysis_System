@@ -16,17 +16,25 @@ from core.market_data.provider_interface import MarketDataProvider
 
 
 class HistoricalFileMarketDataProvider(MarketDataProvider):
-    def __init__(self, data_dir: Path | str):
+    def __init__(self, data_dir: Path | str, symbols: dict[str, Symbol] | None = None):
         self._data_dir = Path(data_dir)
+        # CSV files carry no symbol specification (contract size, digits...),
+        # so the caller must supply it. `symbols` maps NAME -> Symbol; without
+        # an entry for a requested name, get_symbol_info fails loudly instead
+        # of guessing at broker-specific specs.
+        self._symbols = symbols or {}
 
     def is_connected(self) -> bool:
         return self._data_dir.exists()
 
     def get_symbol_info(self, symbol_name: str) -> Symbol:
-        raise NotImplementedError(
-            "HistoricalFileMarketDataProvider requires symbol specs to be supplied by the caller; "
-            "this adapter only serves candle/tick data from files."
-        )
+        try:
+            return self._symbols[symbol_name]
+        except KeyError as exc:
+            raise ValueError(
+                f"no symbol spec supplied for {symbol_name!r} — pass it in "
+                "HistoricalFileMarketDataProvider(symbols={...}) at construction"
+            ) from exc
 
     def get_ohlcv(self, symbol: Symbol, timeframe: Timeframe, count: int) -> CandleSeries:
         path = self._csv_path(symbol.name, timeframe)

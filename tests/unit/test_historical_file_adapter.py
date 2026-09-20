@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from adapters.historical_file.file_adapter import HistoricalFileMarketDataProvider
 from core.market_data.models import Symbol, Timeframe
 
@@ -54,3 +56,16 @@ def test_get_ticks_filters_by_range(tmp_path: Path):
 def test_is_connected_reflects_data_dir_existence(tmp_path: Path):
     provider = HistoricalFileMarketDataProvider(data_dir=tmp_path / "missing")
     assert provider.is_connected() is False
+
+
+def test_get_symbol_info_returns_supplied_spec(tmp_path: Path):
+    provider = HistoricalFileMarketDataProvider(data_dir=tmp_path, symbols={"EURUSD": SYMBOL})
+
+    assert provider.get_symbol_info("EURUSD") is SYMBOL
+
+
+def test_get_symbol_info_without_spec_raises_helpful_error(tmp_path: Path):
+    provider = HistoricalFileMarketDataProvider(data_dir=tmp_path)
+
+    with pytest.raises(ValueError, match="no symbol spec supplied"):
+        provider.get_symbol_info("EURUSD")

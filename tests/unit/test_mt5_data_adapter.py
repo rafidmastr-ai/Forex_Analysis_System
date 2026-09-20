@@ -130,6 +130,7 @@ def test_get_symbol_info_maps_full_broker_spec(mt5_env):
     assert symbol.volume_max == 100.0
     assert symbol.volume_step == 0.01
     assert symbol.point == 0.00001
+    assert symbol.pip_size == 0.0001  # true pip = 10x point on a 5-digit symbol, not the raw point
 
 
 def test_get_symbol_info_unknown_symbol_raises(mt5_env):
@@ -152,6 +153,17 @@ def test_get_ohlcv_converts_rates_to_candles(mt5_env):
     assert len(series) == 10
     assert series.candles[0].timestamp.tzinfo is not None
     assert series.candles[0].close == 1.1005
+    # fixture rate has spread=2 (points); must convert via `point` (0.00001), not the true pip (0.0001).
+    assert series.candles[0].spread == pytest.approx(2 * 0.00001)
+
+
+def test_pip_size_from_point_matches_standard_convention():
+    from adapters.mt5.mt5_data_adapter import pip_size_from_point
+
+    assert pip_size_from_point(0.00001, digits=5) == pytest.approx(0.0001)   # EURUSD-style
+    assert pip_size_from_point(0.001, digits=3) == pytest.approx(0.01)       # USDJPY-style
+    assert pip_size_from_point(0.01, digits=2) == pytest.approx(0.01)        # XAUUSD-style (no fractional pip)
+    assert pip_size_from_point(0.0001, digits=4) == pytest.approx(0.0001)    # legacy 4-digit broker
 
 
 def test_get_ticks_converts_raw_ticks(mt5_env):

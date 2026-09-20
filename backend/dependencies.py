@@ -14,12 +14,25 @@ from adapters.historical_file.file_adapter import HistoricalFileMarketDataProvid
 from adapters.mock.mock_adapter import MockMarketDataProvider
 from backend.config import Settings, get_settings
 from core.confidence.confidence_engine import ConfidenceEngine
+from core.market_data.models import Symbol
 from core.market_data.provider_interface import MarketDataProvider
 from core.market_data.validation import ValidatingMarketDataProvider
 from core.risk.risk_manager import RiskManager
 from core.selection.strategy_selection_engine import StrategySelectionEngine
 from core.strategies.registry import StrategyRegistry
 from core.strategies.registry import registry as _strategy_registry
+
+
+def _symbols_from_config(settings: Settings) -> dict[str, Symbol]:
+    return {
+        entry["name"]: Symbol(
+            name=entry["name"],
+            pip_size=entry["pip_size"],
+            digits=entry["digits"],
+            contract_size=entry["contract_size"],
+        )
+        for entry in settings.symbols
+    }
 
 
 @lru_cache
@@ -31,7 +44,8 @@ def get_market_data_provider() -> MarketDataProvider:
     if provider_name == "mock":
         base = MockMarketDataProvider()
     elif provider_name == "historical_file":
-        base = HistoricalFileMarketDataProvider(data_dir="data/historical")
+        historical_dir = settings.data_source.get("historical_dir", "data/historical")
+        base = HistoricalFileMarketDataProvider(data_dir=historical_dir, symbols=_symbols_from_config(settings))
     elif provider_name == "mt5":
         from adapters.mt5.mt5_data_adapter import MT5DataMarketDataProvider
 
