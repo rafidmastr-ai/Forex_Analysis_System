@@ -54,23 +54,23 @@ from scripts.optimize_strategy import (  # noqa: E402
 CONFIDENCE_THRESHOLDS = {"weak_max": 49, "medium_max": 74}
 AGREEMENT_BONUS = 10
 
-FILTERS: dict[str, tuple[BaseFilter, str]] = {
-    "volatility": (VolatilityRegimeFilter(), "MODIFIED_volatility_filter"),
-    "htf": (HTFTrendAlignmentFilter(), "MODIFIED_htf_trend_alignment_filter"),
+FILTERS: dict[str, tuple[list[BaseFilter], str]] = {
+    "volatility": ([VolatilityRegimeFilter()], "MODIFIED_volatility_filter"),
+    "htf": ([HTFTrendAlignmentFilter()], "MODIFIED_htf_trend_alignment_filter"),
+    "both": ([VolatilityRegimeFilter(), HTFTrendAlignmentFilter()], "MODIFIED_both_filters"),
 }
 
 
-def _selection_engine(filter_instance: BaseFilter | None) -> StrategySelectionEngine:
+def _selection_engine(filters: list[BaseFilter]) -> StrategySelectionEngine:
     confidence_engine = ConfidenceEngine(thresholds=CONFIDENCE_THRESHOLDS, multi_strategy_agreement_bonus=AGREEMENT_BONUS)
-    filters = [filter_instance] if filter_instance is not None else []
     return StrategySelectionEngine(confidence_engine=confidence_engine, filters=filters, min_risk_reward=1.5)
 
 
-def _evaluate(strategy_key: str, symbol: str, filter_instance: BaseFilter | None, start, end):
+def _evaluate(strategy_key: str, symbol: str, filters: list[BaseFilter], start, end):
     spec = STRATEGY_SPECS[strategy_key]
     strategy = spec["cls"](weights=spec["cls"].DEFAULT_WEIGHTS)
     report = run_backtest(
-        strategies=[strategy], provider=_provider(), selection_engine=_selection_engine(filter_instance),
+        strategies=[strategy], provider=_provider(), selection_engine=_selection_engine(filters),
         symbol_name=symbol, timeframe=Timeframe.M15, start=start, end=end,
         timeframes_config=TIMEFRAMES_CONFIG, lookback_bars=LOOKBACK_BARS, min_confidence=None,
     )
@@ -78,7 +78,7 @@ def _evaluate(strategy_key: str, symbol: str, filter_instance: BaseFilter | None
 
 
 def main(filter_key: str) -> None:
-    filter_instance, modified_label = FILTERS[filter_key]
+    filters, modified_label = FILTERS[filter_key]
     registry = OptimizationRegistry()
     split = chronological_split(*FULL_WINDOW)
     results: dict = {}
@@ -90,8 +90,8 @@ def main(filter_key: str) -> None:
             results[strategy_key][symbol] = {}
             for phase, (start, end) in (("train", split.train), ("validation", split.validation), ("out_of_sample", split.out_of_sample)):
                 t0 = time.time()
-                current = _evaluate(strategy_key, symbol, None, start, end)
-                modified = _evaluate(strategy_key, symbol, filter_instance, start, end)
+                current = _evaluate(strategy_key, symbol, [], start, end)
+                modified = _evaluate(strategy_key, symbol, filters, start, end)
                 current_obj = composite_objective(current)
                 modified_obj = composite_objective(modified)
                 elapsed = time.time() - t0
