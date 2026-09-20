@@ -186,6 +186,35 @@ def test_trend_detection_insufficient_data_returns_none():
     assert result.direction is None
 
 
+def test_breaker_block_flips_role_after_invalidation():
+    from core.algorithms.structure.breaker_blocks import find_breaker_blocks
+    from core.algorithms.structure.order_blocks import OrderBlock
+    from core.signals.strategy_signal import PriceZone
+
+    candles = [C(i, 1.10, 1.101, 1.099, 1.10) for i in range(5)]
+    candles.append(C(5, 1.098, 1.099, 1.094, 1.095))  # closes below the bullish OB's low -> breaker
+    bullish_ob = OrderBlock(direction=Direction.BUY, zone=PriceZone(1.097, 1.100), timestamp=BASE, index=2,
+                             structure_event_index=3)
+
+    breakers = find_breaker_blocks(candles, [bullish_ob])
+
+    assert len(breakers) == 1
+    assert breakers[0].direction == Direction.SELL  # flipped to resistance
+    assert breakers[0].zone == bullish_ob.zone
+
+
+def test_breaker_block_none_when_not_invalidated():
+    from core.algorithms.structure.breaker_blocks import find_breaker_blocks
+    from core.algorithms.structure.order_blocks import OrderBlock
+    from core.signals.strategy_signal import PriceZone
+
+    candles = [C(i, 1.10, 1.101, 1.099, 1.10) for i in range(5)]
+    bullish_ob = OrderBlock(direction=Direction.BUY, zone=PriceZone(1.097, 1.100), timestamp=BASE, index=2,
+                             structure_event_index=3)
+
+    assert find_breaker_blocks(candles, [bullish_ob]) == []
+
+
 def test_trend_detection_detects_uptrend():
     closes = [1.0 + i * 0.001 for i in range(120)]
     candles = [C(i, c, c + 0.0005, c - 0.0005, c) for i, c in enumerate(closes)]
