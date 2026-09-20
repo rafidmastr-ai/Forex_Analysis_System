@@ -50,12 +50,14 @@ class _RecordingStrategy(BaseStrategy):
     def __init__(self, fixed_signal_factory):
         self.seen_as_of: list[datetime] = []
         self.seen_last_visible_timestamps: list[datetime] = []
+        self.seen_entry_lengths: list[int] = []
         self._fixed_signal_factory = fixed_signal_factory
 
     def analyze(self, context: AnalysisContext) -> StrategySignal | None:
         self.seen_as_of.append(context.as_of)
         last_visible = context.entry_timeframe.candles[-1].timestamp if context.entry_timeframe.candles else None
         self.seen_last_visible_timestamps.append(last_visible)
+        self.seen_entry_lengths.append(len(context.entry_timeframe.candles))
         return self._fixed_signal_factory(context)
 
 
@@ -79,7 +81,7 @@ class _FakeRegistry(StrategyRegistry):
         return [lambda inst=self._instance: inst]  # calling it returns the same recorded instance
 
 
-def _make_engine_with_recording_strategy(candles, fixed_signal_factory):
+def _make_engine_with_recording_strategy(candles, fixed_signal_factory, lookback_bars=None):
     strategy = _RecordingStrategy(fixed_signal_factory)
     registry = _FakeRegistry(strategy)
     provider = _FakeProvider(candles)
@@ -89,7 +91,8 @@ def _make_engine_with_recording_strategy(candles, fixed_signal_factory):
 
     confidence_engine = ConfidenceEngine(thresholds={"weak_max": 49, "medium_max": 74}, multi_strategy_agreement_bonus=10)
     selection_engine = StrategySelectionEngine(confidence_engine=confidence_engine, filters=[], min_risk_reward=1.0)
-    engine = BacktestEngine(provider=provider, registry=registry, selection_engine=selection_engine)
+    engine = BacktestEngine(provider=provider, registry=registry, selection_engine=selection_engine,
+                             lookback_bars=lookback_bars)
     return engine, strategy
 
 
@@ -180,3 +183,44 @@ def test_backtest_run_config_categories_property():
     all_config = BacktestRunConfig(symbol_name="EURUSD", entry_timeframe=Timeframe.M15, strategy_set="All",
                                     start=BASE, end=BASE)
     assert all_config.categories is None
+
+
+def test_lookback_bars_bounds_the_visible_window_without_breaking_point_in_time():
+    """Without a bound, the entry series a strategy sees grows on every
+    single simulated bar (unbounded — and, since several algorithms rescan
+    the whole visible window each call, the reason a real multi-year
+    backtest was impractically slow before this was added). With a bound,
+    the window must never exceed it, while Point-in-Time (never seeing a
+    future candle) still holds."""
+    candles = _make_candles(30)
+
+    def no_signal(context):
+        return None
+
+    engine, strategy = _make_engine_with_recording_strategy(
+        candles, no_signal, lookback_bars={"higher": 5, "middle": 5, "entry": 5}
+    )
+    config = BacktestRunConfig(symbol_name="EURUSD", entry_timeframe=Timeframe.M15, strategy_set="Classic",
+                                start=candles[10].timestamp, end=candles[25].timestamp)
+
+    engine.run(config)
+
+    assert len(strategy.seen_entry_lengths) > 0
+    assert max(strategy.seen_entry_lengths) <= 5
+    for as_of, last_visible in zip(strategy.seen_as_of, strategy.seen_last_visible_timestamps):
+        assert last_visible <= as_of  # bounding must not break Point-in-Time
+
+
+def test_no_lookback_bars_keeps_the_old_unbounded_behavior():
+    candles = _make_candles(30)
+
+    def no_signal(context):
+        return None
+
+    engine, strategy = _make_engine_with_recording_strategy(candles, no_signal, lookback_bars=None)
+    config = BacktestRunConfig(symbol_name="EURUSD", entry_timeframe=Timeframe.M15, strategy_set="Classic",
+                                start=candles[10].timestamp, end=candles[25].timestamp)
+
+    engine.run(config)
+
+    assert max(strategy.seen_entry_lengths) > 5  # grows past any small bound when none is configured

@@ -34,7 +34,7 @@ def run_backtest(payload: BacktestRequest, provider=Depends(get_market_data_prov
                   registry=Depends(get_strategy_registry), selection_engine=Depends(get_selection_engine),
                   settings: Settings = Depends(get_settings_dep)):
     engine = BacktestEngine(provider=provider, registry=registry, selection_engine=selection_engine,
-                             timeframes_config=settings.timeframes)
+                             timeframes_config=settings.timeframes, lookback_bars=settings.data["lookback_bars"])
 
     if payload.strategy_set == "AllCombinations":
         reports = run_all_combinations(engine, payload.symbol, Timeframe(payload.entry_timeframe), payload.start, payload.end)

@@ -16,7 +16,7 @@ from datetime import datetime
 from backtesting.run_config import BacktestRunConfig
 from core.context.analysis_context import AnalysisContext
 from core.context.timeframe_selector import TimeframeSelector
-from core.market_data.models import Symbol
+from core.market_data.models import CandleSeries, Symbol
 from core.market_data.provider_interface import MarketDataProvider
 from core.selection.strategy_selection_engine import StrategySelectionEngine
 from core.signals.enums import Direction, SetupStatus
@@ -55,6 +55,7 @@ class BacktestEngine:
         registry: StrategyRegistry,
         selection_engine: StrategySelectionEngine,
         timeframes_config: dict | None = None,
+        lookback_bars: dict | None = None,
     ):
         self._provider = provider
         self._registry = registry
@@ -64,6 +65,16 @@ class BacktestEngine:
         # runs should always pass config.timeframes so Higher/Middle are
         # genuinely different timeframes, not the entry series reused.
         self._timeframes_config = timeframes_config
+        # Mirrors config.data.lookback_bars, the same bound the live
+        # /analyze flow fetches (backend/routers/signals.py). Without this,
+        # each simulated bar would hand strategies the ENTIRE history seen
+        # so far instead of the bounded recent window they'd actually get
+        # live — both a correctness mismatch with production behavior and,
+        # since several algorithms rescan the full visible window every
+        # step, an unbounded-growth cost that makes a real multi-year
+        # backtest impractically slow. `None` keeps the old unbounded
+        # behavior for callers/tests that don't pass it.
+        self._lookback_bars = lookback_bars
 
     def run(self, config: BacktestRunConfig) -> BacktestReport:
         symbol: Symbol = self._provider.get_symbol_info(config.symbol_name)
@@ -89,9 +100,9 @@ class BacktestEngine:
                 current_bid=candle.close,
                 current_ask=candle.close + (candle.spread or 0.0),
                 session="unspecified",
-                higher_timeframe=higher_series.sliced_as_of(as_of),
-                middle_timeframe=middle_series.sliced_as_of(as_of),
-                entry_timeframe=entry_series.sliced_as_of(as_of),
+                higher_timeframe=self._bounded(higher_series.sliced_as_of(as_of), "higher"),
+                middle_timeframe=self._bounded(middle_series.sliced_as_of(as_of), "middle"),
+                entry_timeframe=self._bounded(entry_series.sliced_as_of(as_of), "entry"),
                 as_of=as_of,
             )
             setup = self._selection_engine.run(strategies, context)
@@ -103,6 +114,14 @@ class BacktestEngine:
             report.outcomes.append(TradeOutcome(setup=setup, opened_at=as_of, hit=hit))
 
         return report
+
+    def _bounded(self, series: CandleSeries, role: str) -> CandleSeries:
+        if self._lookback_bars is None:
+            return series
+        max_bars = self._lookback_bars[role]
+        if len(series.candles) <= max_bars:
+            return series
+        return CandleSeries(symbol=series.symbol, timeframe=series.timeframe, candles=series.candles[-max_bars:])
 
     @staticmethod
     def _simulate_outcome(setup: SelectedSetup, future_candles: list) -> str:

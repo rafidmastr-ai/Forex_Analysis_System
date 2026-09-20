@@ -6,6 +6,7 @@ are the common currency the whole system speaks.
 """
 from __future__ import annotations
 
+from bisect import bisect_right
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -81,10 +82,13 @@ class CandleSeries:
 
         This is the single mechanism the whole system uses to avoid
         look-ahead: nothing downstream should ever slice `.candles` by
-        hand.
+        hand. `candles` is always chronologically ordered (enforced by the
+        Data Validation Layer), so this is a binary search — important for
+        the Backtesting Engine, which calls this once per simulated bar;
+        a linear scan here would make a full backtest run O(n^2).
         """
-        visible = [c for c in self.candles if c.timestamp <= as_of]
-        return CandleSeries(symbol=self.symbol, timeframe=self.timeframe, candles=visible)
+        idx = bisect_right(self.candles, as_of, key=lambda c: c.timestamp)
+        return CandleSeries(symbol=self.symbol, timeframe=self.timeframe, candles=self.candles[:idx])
 
 
 @dataclass(frozen=True)
