@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from backtesting.engine import BacktestEngine
 from backtesting.run_config import STRATEGY_COMBINATIONS, BacktestRunConfig
 from core.context.analysis_context import AnalysisContext
@@ -136,6 +138,60 @@ def test_outcome_simulation_uses_only_future_candles_after_entry():
 
     assert report.total_setups == 1
     assert report.outcomes[0].hit == "TP1"
+    assert report.outcomes[0].r_multiple == pytest.approx(2.0)  # (1.11-1.10)/(1.10-1.095)
+
+
+def test_sl_outcome_records_minus_one_r_and_none_records_zero():
+    candles = _make_candles(30, start_price=1.1000, step=0.0)
+    candles[11] = Candle(timestamp=candles[11].timestamp, open=1.10, high=1.101, low=1.090, close=1.10, volume=100)
+
+    def buy_signal_at_index_10(context):
+        if context.as_of != candles[10].timestamp:
+            return None
+        return StrategySignal(
+            strategy_id="recording_dummy", category=StrategyCategory.CLASSIC, direction=Direction.BUY,
+            suggested_entry_zone=PriceZone(1.10, 1.10), suggested_stop_loss=1.095,
+            suggested_take_profit_1=1.11, suggested_take_profit_2=1.12, rationale=["fixture"],
+            raw_score_components={"base_confidence": 80},
+        )
+
+    engine, _ = _make_engine_with_recording_strategy(candles, buy_signal_at_index_10)
+    config = BacktestRunConfig(symbol_name="EURUSD", entry_timeframe=Timeframe.M15, strategy_set="Classic",
+                                start=candles[10].timestamp, end=candles[20].timestamp)
+
+    report = engine.run(config)
+
+    assert report.outcomes[0].hit == "SL"
+    assert report.outcomes[0].r_multiple == -1.0
+
+
+def test_min_confidence_filters_out_low_confidence_setups():
+    candles = _make_candles(20)
+
+    def low_confidence_signal(context):
+        return StrategySignal(
+            strategy_id="recording_dummy", category=StrategyCategory.CLASSIC, direction=Direction.BUY,
+            suggested_entry_zone=PriceZone(1.10, 1.10), suggested_stop_loss=1.095,
+            suggested_take_profit_1=1.11, suggested_take_profit_2=1.12, rationale=["fixture"],
+            raw_score_components={"base_confidence": 40},  # below the 50 threshold below
+        )
+
+    strategy = _RecordingStrategy(low_confidence_signal)
+    registry = _FakeRegistry(strategy)
+    provider = _FakeProvider(candles)
+    from core.confidence.confidence_engine import ConfidenceEngine
+    from core.selection.strategy_selection_engine import StrategySelectionEngine
+    confidence_engine = ConfidenceEngine(thresholds={"weak_max": 49, "medium_max": 74}, multi_strategy_agreement_bonus=10)
+    selection_engine = StrategySelectionEngine(confidence_engine=confidence_engine, filters=[], min_risk_reward=1.0)
+
+    unfiltered = BacktestEngine(provider=provider, registry=registry, selection_engine=selection_engine)
+    filtered = BacktestEngine(provider=provider, registry=registry, selection_engine=selection_engine, min_confidence=50)
+
+    config = BacktestRunConfig(symbol_name="EURUSD", entry_timeframe=Timeframe.M15, strategy_set="Classic",
+                                start=candles[5].timestamp, end=candles[15].timestamp)
+
+    assert unfiltered.run(config).total_setups > 0
+    assert filtered.run(config).total_setups == 0
 
 
 def test_multi_timeframe_config_fetches_different_series_for_higher_middle():

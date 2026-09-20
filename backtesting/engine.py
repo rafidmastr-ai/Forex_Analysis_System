@@ -29,6 +29,7 @@ class TradeOutcome:
     setup: SelectedSetup
     opened_at: datetime
     hit: str  # "TP1" | "TP2" | "SL" | "NONE" (window ended before either was hit)
+    r_multiple: float  # realized R: risk_reward_tp1/tp2 on a win, -1.0 on SL, 0.0 on NONE (excluded from R stats)
 
 
 @dataclass
@@ -47,6 +48,13 @@ class BacktestReport:
         wins = sum(1 for o in self.outcomes if o.hit in ("TP1", "TP2"))
         return wins / len(self.outcomes)
 
+    @property
+    def resolved_outcomes(self) -> list[TradeOutcome]:
+        """Outcomes that actually resolved (hit TP1/TP2/SL) before the run
+        window ended — "NONE" trades are still open and excluded from any
+        R-based statistic, not treated as a loss or a scratch."""
+        return [o for o in self.outcomes if o.hit != "NONE"]
+
 
 class BacktestEngine:
     def __init__(
@@ -56,10 +64,20 @@ class BacktestEngine:
         selection_engine: StrategySelectionEngine,
         timeframes_config: dict | None = None,
         lookback_bars: dict | None = None,
+        min_confidence: int | None = None,
     ):
         self._provider = provider
         self._registry = registry
         self._selection_engine = selection_engine
+        # A confidence floor for actually TAKING a setup in this run — None
+        # (the default, and the only mode used outside optimization/) means
+        # every setup that clears the min-R:R floor is traded, matching
+        # production /analyze (confidence is informational there, it never
+        # gates the trade). The optimization framework sets this so that
+        # different component weights can actually change which trades are
+        # taken, not just relabel the same fixed trade set — otherwise
+        # weight optimization would have no way to affect performance at all.
+        self._min_confidence = min_confidence
         # Falls back to the entry timeframe for all three roles only if no
         # config is supplied (keeps older call sites/tests working); real
         # runs should always pass config.timeframes so Higher/Middle are
@@ -108,10 +126,12 @@ class BacktestEngine:
             setup = self._selection_engine.run(strategies, context)
             if setup is None or setup.status != SetupStatus.SELECTED:
                 continue
+            if self._min_confidence is not None and setup.confidence_score < self._min_confidence:
+                continue
 
             future_candles = [c for c in entry_series.candles if c.timestamp > as_of]
-            hit = self._simulate_outcome(setup, future_candles)
-            report.outcomes.append(TradeOutcome(setup=setup, opened_at=as_of, hit=hit))
+            hit, r_multiple = self._simulate_outcome(setup, future_candles)
+            report.outcomes.append(TradeOutcome(setup=setup, opened_at=as_of, hit=hit, r_multiple=r_multiple))
 
         return report
 
@@ -124,20 +144,20 @@ class BacktestEngine:
         return CandleSeries(symbol=series.symbol, timeframe=series.timeframe, candles=series.candles[-max_bars:])
 
     @staticmethod
-    def _simulate_outcome(setup: SelectedSetup, future_candles: list) -> str:
+    def _simulate_outcome(setup: SelectedSetup, future_candles: list) -> tuple[str, float]:
         for candle in future_candles:
             if setup.direction == Direction.BUY:
                 if candle.low <= setup.stop_loss:
-                    return "SL"
+                    return "SL", -1.0
                 if candle.high >= setup.take_profit_2:
-                    return "TP2"
+                    return "TP2", setup.risk_reward_tp2
                 if candle.high >= setup.take_profit_1:
-                    return "TP1"
+                    return "TP1", setup.risk_reward_tp1
             else:
                 if candle.high >= setup.stop_loss:
-                    return "SL"
+                    return "SL", -1.0
                 if candle.low <= setup.take_profit_2:
-                    return "TP2"
+                    return "TP2", setup.risk_reward_tp2
                 if candle.low <= setup.take_profit_1:
-                    return "TP1"
-        return "NONE"
+                    return "TP1", setup.risk_reward_tp1
+        return "NONE", 0.0
