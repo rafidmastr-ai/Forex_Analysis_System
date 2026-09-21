@@ -139,6 +139,7 @@ def test_outcome_simulation_uses_only_future_candles_after_entry():
     assert report.total_setups == 1
     assert report.outcomes[0].hit == "TP1"
     assert report.outcomes[0].r_multiple == pytest.approx(2.0)  # (1.11-1.10)/(1.10-1.095)
+    assert report.outcomes[0].closed_at == candles[12].timestamp
 
 
 def test_sl_outcome_records_minus_one_r_and_none_records_zero():
@@ -163,6 +164,33 @@ def test_sl_outcome_records_minus_one_r_and_none_records_zero():
 
     assert report.outcomes[0].hit == "SL"
     assert report.outcomes[0].r_multiple == -1.0
+    assert report.outcomes[0].closed_at == candles[11].timestamp
+
+
+def test_none_outcome_records_no_closed_at():
+    """A trade still open when the run window ends must not fabricate a
+    resolution timestamp — closed_at stays None, symmetric with hit="NONE"
+    excluding it from every R-based statistic."""
+    candles = _make_candles(15, start_price=1.1000, step=0.0)  # never moves enough to hit SL/TP
+
+    def buy_signal_at_index_10(context):
+        if context.as_of != candles[10].timestamp:
+            return None
+        return StrategySignal(
+            strategy_id="recording_dummy", category=StrategyCategory.CLASSIC, direction=Direction.BUY,
+            suggested_entry_zone=PriceZone(1.10, 1.10), suggested_stop_loss=1.050,
+            suggested_take_profit_1=1.20, suggested_take_profit_2=1.30, rationale=["fixture"],
+            raw_score_components={"base_confidence": 80},
+        )
+
+    engine, _ = _make_engine_with_recording_strategy(candles, buy_signal_at_index_10)
+    config = BacktestRunConfig(symbol_name="EURUSD", entry_timeframe=Timeframe.M15, strategy_set="Classic",
+                                start=candles[10].timestamp, end=candles[14].timestamp)
+
+    report = engine.run(config)
+
+    assert report.outcomes[0].hit == "NONE"
+    assert report.outcomes[0].closed_at is None
 
 
 def test_min_confidence_filters_out_low_confidence_setups():

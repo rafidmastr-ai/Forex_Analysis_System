@@ -30,6 +30,7 @@ class TradeOutcome:
     opened_at: datetime
     hit: str  # "TP1" | "TP2" | "SL" | "NONE" (window ended before either was hit)
     r_multiple: float  # realized R: risk_reward_tp1/tp2 on a win, -1.0 on SL, 0.0 on NONE (excluded from R stats)
+    closed_at: datetime | None = None  # timestamp of the candle that resolved the trade; None for "NONE" (still open) — purely descriptive (duration reporting), never read by any decision logic
 
 
 @dataclass
@@ -130,8 +131,8 @@ class BacktestEngine:
                 continue
 
             future_candles = [c for c in entry_series.candles if c.timestamp > as_of]
-            hit, r_multiple = self._simulate_outcome(setup, future_candles)
-            report.outcomes.append(TradeOutcome(setup=setup, opened_at=as_of, hit=hit, r_multiple=r_multiple))
+            hit, r_multiple, closed_at = self._simulate_outcome(setup, future_candles)
+            report.outcomes.append(TradeOutcome(setup=setup, opened_at=as_of, hit=hit, r_multiple=r_multiple, closed_at=closed_at))
 
         return report
 
@@ -144,20 +145,20 @@ class BacktestEngine:
         return CandleSeries(symbol=series.symbol, timeframe=series.timeframe, candles=series.candles[-max_bars:])
 
     @staticmethod
-    def _simulate_outcome(setup: SelectedSetup, future_candles: list) -> tuple[str, float]:
+    def _simulate_outcome(setup: SelectedSetup, future_candles: list) -> tuple[str, float, datetime | None]:
         for candle in future_candles:
             if setup.direction == Direction.BUY:
                 if candle.low <= setup.stop_loss:
-                    return "SL", -1.0
+                    return "SL", -1.0, candle.timestamp
                 if candle.high >= setup.take_profit_2:
-                    return "TP2", setup.risk_reward_tp2
+                    return "TP2", setup.risk_reward_tp2, candle.timestamp
                 if candle.high >= setup.take_profit_1:
-                    return "TP1", setup.risk_reward_tp1
+                    return "TP1", setup.risk_reward_tp1, candle.timestamp
             else:
                 if candle.high >= setup.stop_loss:
-                    return "SL", -1.0
+                    return "SL", -1.0, candle.timestamp
                 if candle.low <= setup.take_profit_2:
-                    return "TP2", setup.risk_reward_tp2
+                    return "TP2", setup.risk_reward_tp2, candle.timestamp
                 if candle.low <= setup.take_profit_1:
-                    return "TP1", setup.risk_reward_tp1
-        return "NONE", 0.0
+                    return "TP1", setup.risk_reward_tp1, candle.timestamp
+        return "NONE", 0.0, None
