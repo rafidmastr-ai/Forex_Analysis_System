@@ -41,9 +41,9 @@ from core.selection.strategy_selection_engine import StrategySelectionEngine  # 
 from optimization.objective import composite_objective, compute_metrics  # noqa: E402
 from optimization.registry import ExperimentRecord, OptimizationRegistry  # noqa: E402
 from optimization.runner import run_backtest  # noqa: E402
+from scripts.data_window import full_window_for  # noqa: E402
 from scripts.optimize_strategy import (  # noqa: E402
     DATASET,
-    FULL_WINDOW,
     LOOKBACK_BARS,
     STRATEGY_SPECS,
     TIMEFRAMES_CONFIG,
@@ -80,13 +80,13 @@ def _evaluate(strategy_key: str, symbol: str, filters: list[BaseFilter], start, 
 def main(filter_key: str) -> None:
     filters, modified_label = FILTERS[filter_key]
     registry = OptimizationRegistry()
-    split = chronological_split(*FULL_WINDOW)
     results: dict = {}
 
     for strategy_key in STRATEGY_SPECS:
         strategy_id = STRATEGY_SPECS[strategy_key]["cls"].strategy_id
         results[strategy_key] = {}
         for symbol in ("EURUSD", "XAUUSD"):
+            split = chronological_split(*full_window_for(symbol))
             results[strategy_key][symbol] = {}
             for phase, (start, end) in (("train", split.train), ("validation", split.validation), ("out_of_sample", split.out_of_sample)):
                 t0 = time.time()

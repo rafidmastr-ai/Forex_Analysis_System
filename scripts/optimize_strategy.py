@@ -55,10 +55,12 @@ import json
 import sys
 import time
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import yaml
 
 from adapters.historical_file.file_adapter import HistoricalFileMarketDataProvider  # noqa: E402
 from core.confidence.component_scoring import ComponentWeights  # noqa: E402
@@ -120,20 +122,34 @@ from optimization.objective import PerformanceMetrics, composite_objective
 from optimization.registry import ExperimentRecord, OptimizationRegistry
 from optimization.runner import evaluate_metrics
 from optimization.weight_search import random_search
+from scripts.data_window import full_window_for
 
 MIN_CONFIDENCE = 65
 PERTURBATION_FRACTIONS = [0.05, 0.10, 0.15]  # how much weight to redistribute, tested at each step
 TOP_K_TO_VALIDATE = 3
-DATASET = "mt5_2025_2026"
+# NOT "mt5_2025_2026" -- that labeled the earlier MT5-export dataset, which
+# no longer exists in this repository (see data/market/ and
+# scripts/build_m1_historical_data.py for the current, only data source).
+DATASET = "m1_ohlc_2025_2026"
 
-FULL_WINDOW = (datetime(2025, 9, 15, tzinfo=timezone.utc), datetime(2026, 9, 16, tzinfo=timezone.utc))
+# No hard-coded window here: each symbol's actual available range is
+# detected from its own uploaded CSV by scripts/build_m1_historical_data.py
+# and read back per-symbol via scripts.data_window.full_window_for() at each
+# call site below -- the single authoritative source (see that module's
+# docstring), never duplicated or assumed identical across symbols.
 
 SYMBOLS = {
     "EURUSD": Symbol(name="EURUSD", pip_size=0.0001, digits=5, contract_size=100000),
     "XAUUSD": Symbol(name="XAUUSD", pip_size=0.01, digits=2, contract_size=100),
+    "GBPUSD": Symbol(name="GBPUSD", pip_size=0.0001, digits=5, contract_size=100000),
+    "NZDUSD": Symbol(name="NZDUSD", pip_size=0.0001, digits=5, contract_size=100000),
 }
 
-TIMEFRAMES_CONFIG = {"default_mapping": {"higher": "H4", "middle": "H1", "entry": "M15"}, "selection_rules": []}
+# Loaded from config/settings.backtest.yaml's `timeframes:` section -- the
+# single, documented-in-configuration source (see that file's comments and
+# core/context/timeframe_selector.py) -- rather than a second, Python-typed
+# copy of the same mapping that could silently drift from it.
+TIMEFRAMES_CONFIG = yaml.safe_load(Path("config/settings.backtest.yaml").read_text())["timeframes"]
 LOOKBACK_BARS = {"higher": 200, "middle": 300, "entry": 500}
 
 STRATEGY_SPECS = {
@@ -246,7 +262,7 @@ def run(strategy_key: str) -> dict:
 
     t0 = time.time()
     print(f"=== {strategy_id} :: EURUSD split ===", flush=True)
-    split = chronological_split(*FULL_WINDOW)
+    split = chronological_split(*full_window_for("EURUSD"))
     print(f"train={split.train} validation={split.validation} oos={split.out_of_sample}", flush=True)
 
     # --- Baseline (DEFAULT_WEIGHTS, same min_confidence filter as everything else) ---
@@ -333,7 +349,7 @@ def run(strategy_key: str) -> dict:
 
     # --- XAUUSD generalization check (same weights, no re-search) ---
     print("=== XAUUSD generalization check (same weights, no re-search) ===", flush=True)
-    xau_split = chronological_split(*FULL_WINDOW)
+    xau_split = chronological_split(*full_window_for("XAUUSD"))
     xau_metrics = {}
     for phase, (start, end) in (("train", xau_split.train), ("validation", xau_split.validation), ("out_of_sample", xau_split.out_of_sample)):
         m = evaluate(strategy_cls(weights=chosen_weights), "XAUUSD", start, end)

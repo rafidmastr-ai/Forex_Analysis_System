@@ -64,9 +64,9 @@ from core.strategies.sweep_displacement.sweep_displacement_strategy import (  # 
 from optimization.extended_metrics import compute_extended_metrics  # noqa: E402
 from optimization.registry import ExperimentRecord, OptimizationRegistry  # noqa: E402
 from optimization.runner import run_backtest  # noqa: E402
+from scripts.data_window import full_window_for  # noqa: E402
 from scripts.optimize_strategy import (  # noqa: E402
     DATASET,
-    FULL_WINDOW,
     LOOKBACK_BARS,
     TIMEFRAMES_CONFIG,
     _provider,
@@ -190,6 +190,7 @@ def run_symbol(symbol_name: str, registry: OptimizationRegistry) -> dict:
     selection_engine = _production_selection_engine()
     results: dict = {}
     reports: dict = {}
+    window = full_window_for(symbol_name)
 
     for names in COMBINATIONS:
         label = _combo_label(names)
@@ -197,7 +198,7 @@ def run_symbol(symbol_name: str, registry: OptimizationRegistry) -> dict:
         strategies = _build_strategies(names)
         report = run_backtest(
             strategies=strategies, provider=provider, selection_engine=selection_engine,
-            symbol_name=symbol_name, timeframe=Timeframe.M15, start=FULL_WINDOW[0], end=FULL_WINDOW[1],
+            symbol_name=symbol_name, timeframe=Timeframe.M15, start=window[0], end=window[1],
             timeframes_config=TIMEFRAMES_CONFIG, lookback_bars=LOOKBACK_BARS, min_confidence=None,
         )
         reports[label] = report
@@ -206,7 +207,7 @@ def run_symbol(symbol_name: str, registry: OptimizationRegistry) -> dict:
 
         rec = ExperimentRecord(
             strategy=label, symbol=symbol_name, timeframe="M15", dataset=DATASET, phase="combination",
-            training_period=(FULL_WINDOW[0].isoformat(), FULL_WINDOW[1].isoformat()),
+            training_period=(window[0].isoformat(), window[1].isoformat()),
             validation_period=("", ""), oos_period=("", ""),
             parameters={"min_confidence": None, "members": names, "purpose": "final_evaluation_current_version"},
             component_weights={}, disabled_components=[],
@@ -273,7 +274,9 @@ def main() -> None:
     registry = OptimizationRegistry()
     summary = {
         "purpose": "current-version evaluation (not an optimization step)",
-        "window": [FULL_WINDOW[0].isoformat(), FULL_WINDOW[1].isoformat()],
+        # Per-symbol, not a single shared window -- symbols are not guaranteed
+        # (and, in the current data/market/ upload, are not) identical in range.
+        "windows": {s: [w.isoformat() for w in full_window_for(s)] for s in ("EURUSD", "XAUUSD")},
         "adopted_strategies": ALL_NAMES,
         "filters": ["VolatilityRegimeFilter", "HTFTrendAlignmentFilter"],
         "min_confidence": None, "min_risk_reward": MIN_RISK_REWARD,

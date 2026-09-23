@@ -61,9 +61,9 @@ from core.market_data.models import Timeframe  # noqa: E402
 from core.signals.enums import Direction  # noqa: E402
 from optimization.extended_metrics import compute_extended_metrics  # noqa: E402
 from optimization.runner import run_backtest  # noqa: E402
+from scripts.data_window import full_window_for  # noqa: E402
 from scripts.final_evaluation import (  # noqa: E402
     ALL_NAMES,
-    FULL_WINDOW,
     LOOKBACK_BARS,
     TIMEFRAMES_CONFIG,
     _build_strategies,
@@ -189,9 +189,10 @@ def build_trade_records(symbol_name: str) -> tuple[list[TradeRecord], dict]:
 
     strategies = _build_strategies(ALL_NAMES)
     selection_engine = _production_selection_engine()
+    window = full_window_for(symbol_name)
     report = run_backtest(
         strategies=strategies, provider=provider, selection_engine=selection_engine,
-        symbol_name=symbol_name, timeframe=Timeframe.M15, start=FULL_WINDOW[0], end=FULL_WINDOW[1],
+        symbol_name=symbol_name, timeframe=Timeframe.M15, start=window[0], end=window[1],
         timeframes_config=TIMEFRAMES_CONFIG, lookback_bars=LOOKBACK_BARS, min_confidence=None,
     )
     sanity = asdict(compute_extended_metrics(report.outcomes))

@@ -295,6 +295,79 @@ def test_lookback_bars_bounds_the_visible_window_without_breaking_point_in_time(
         assert last_visible <= as_of  # bounding must not break Point-in-Time
 
 
+def test_same_candle_sl_and_tp_both_touched_resolves_as_sl():
+    """OHLC data cannot establish true intrabar order -- backtesting/engine
+    .py's documented, deterministic convention is SL-before-TP whenever a
+    single candle's range covers both. Regression test for that policy."""
+    candles = _make_candles(20, start_price=1.1000, step=0.0)
+    # candle[11]'s range covers both the SL (1.095) and TP1 (1.11) of the signal below.
+    candles[11] = Candle(timestamp=candles[11].timestamp, open=1.10, high=1.12, low=1.09, close=1.10, volume=100)
+
+    def buy_signal_at_index_10(context):
+        if context.as_of != candles[10].timestamp:
+            return None
+        return StrategySignal(
+            strategy_id="recording_dummy", category=StrategyCategory.CLASSIC, direction=Direction.BUY,
+            suggested_entry_zone=PriceZone(1.10, 1.10), suggested_stop_loss=1.095,
+            suggested_take_profit_1=1.11, suggested_take_profit_2=1.12, rationale=["fixture"],
+            raw_score_components={"base_confidence": 80},
+        )
+
+    engine, _ = _make_engine_with_recording_strategy(candles, buy_signal_at_index_10)
+    config = BacktestRunConfig(symbol_name="EURUSD", entry_timeframe=Timeframe.M15, strategy_set="Classic",
+                                start=candles[10].timestamp, end=candles[15].timestamp)
+
+    report = engine.run(config)
+
+    assert report.outcomes[0].hit == "SL"
+    assert report.outcomes[0].r_multiple == -1.0
+
+
+def test_rejected_min_rr_setup_is_never_counted_as_a_trade():
+    """A setup that fails the min-R:R floor comes back from
+    StrategySelectionEngine with status=REJECTED_MIN_RR rather than None --
+    BacktestEngine must never turn that into a TradeOutcome."""
+    candles = _make_candles(20)
+
+    def low_rr_signal(context):
+        # R:R = (1.101-1.10)/(1.10-1.095) = 0.2 -- well under the 1.5 floor below.
+        return StrategySignal(
+            strategy_id="recording_dummy", category=StrategyCategory.CLASSIC, direction=Direction.BUY,
+            suggested_entry_zone=PriceZone(1.10, 1.10), suggested_stop_loss=1.095,
+            suggested_take_profit_1=1.101, suggested_take_profit_2=1.102, rationale=["fixture"],
+            raw_score_components={"base_confidence": 80},
+        )
+
+    strategy = _RecordingStrategy(low_rr_signal)
+    registry = _FakeRegistry(strategy)
+    provider = _FakeProvider(candles)
+    from core.confidence.confidence_engine import ConfidenceEngine
+    from core.selection.strategy_selection_engine import StrategySelectionEngine
+    confidence_engine = ConfidenceEngine(thresholds={"weak_max": 49, "medium_max": 74}, multi_strategy_agreement_bonus=10)
+    # min_risk_reward=1.5 -- the production floor this test's signal (R:R=0.2) fails.
+    selection_engine = StrategySelectionEngine(confidence_engine=confidence_engine, filters=[], min_risk_reward=1.5)
+    engine = BacktestEngine(provider=provider, registry=registry, selection_engine=selection_engine)
+    config = BacktestRunConfig(symbol_name="EURUSD", entry_timeframe=Timeframe.M15, strategy_set="Classic",
+                                start=candles[5].timestamp, end=candles[15].timestamp)
+
+    # Sanity: the underlying selection engine really does produce a rejected
+    # (not None) setup for this signal -- otherwise this test would pass for
+    # the wrong reason.
+    raw_setup = selection_engine.run([strategy], AnalysisContext(
+        symbol=SYMBOL, current_bid=1.10, current_ask=1.10, session="unspecified",
+        higher_timeframe=CandleSeries(symbol=SYMBOL, timeframe=Timeframe.M15, candles=candles),
+        middle_timeframe=CandleSeries(symbol=SYMBOL, timeframe=Timeframe.M15, candles=candles),
+        entry_timeframe=CandleSeries(symbol=SYMBOL, timeframe=Timeframe.M15, candles=candles),
+        as_of=candles[-1].timestamp,
+    ))
+    assert raw_setup is not None
+    from core.signals.enums import SetupStatus
+    assert raw_setup.status == SetupStatus.REJECTED_MIN_RR
+
+    report = engine.run(config)
+    assert report.total_setups == 0
+
+
 def test_no_lookback_bars_keeps_the_old_unbounded_behavior():
     candles = _make_candles(30)
 

@@ -50,7 +50,7 @@ import json
 import sys
 import time
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from datetime import time as dt_time
 from pathlib import Path
 
@@ -72,9 +72,9 @@ from core.strategies.sweep_displacement.sweep_displacement_strategy import (  # 
 from optimization.objective import composite_objective, compute_metrics  # noqa: E402
 from optimization.registry import ExperimentRecord, OptimizationRegistry  # noqa: E402
 from optimization.runner import run_backtest  # noqa: E402
+from scripts.data_window import full_window_for  # noqa: E402
 from scripts.optimize_strategy import (  # noqa: E402
     DATASET,
-    FULL_WINDOW,
     LOOKBACK_BARS,
     MIN_CONFIDENCE,
     TIMEFRAMES_CONFIG,
@@ -132,6 +132,7 @@ def run_symbol(symbol_name: str, registry: OptimizationRegistry) -> dict:
     selection_engine = _selection_engine()
     results = {}
     reports = {}
+    window = full_window_for(symbol_name)
 
     for names in COMBINATIONS:
         label = _combo_label(names)
@@ -139,7 +140,7 @@ def run_symbol(symbol_name: str, registry: OptimizationRegistry) -> dict:
         strategies = _build_strategies(names)
         report = run_backtest(
             strategies=strategies, provider=provider, selection_engine=selection_engine,
-            symbol_name=symbol_name, timeframe=Timeframe.M15, start=FULL_WINDOW[0], end=FULL_WINDOW[1],
+            symbol_name=symbol_name, timeframe=Timeframe.M15, start=window[0], end=window[1],
             timeframes_config=TIMEFRAMES_CONFIG, lookback_bars=LOOKBACK_BARS, min_confidence=MIN_CONFIDENCE,
         )
         reports[label] = report
@@ -156,7 +157,7 @@ def run_symbol(symbol_name: str, registry: OptimizationRegistry) -> dict:
 
         rec = ExperimentRecord(
             strategy=label, symbol=symbol_name, timeframe="M15", dataset=DATASET, phase="combination",
-            training_period=(FULL_WINDOW[0].isoformat(), FULL_WINDOW[1].isoformat()),
+            training_period=(window[0].isoformat(), window[1].isoformat()),
             validation_period=("", ""), oos_period=("", ""),
             parameters={"min_confidence": MIN_CONFIDENCE, "members": names},
             component_weights={}, disabled_components=[],
@@ -226,14 +227,22 @@ def _raw_signal_events(symbol_name: str) -> dict[str, dict]:
     strategies = {name: cls() for name, cls in STRATEGY_BUILDERS.items()}
     events: dict[str, dict] = {name: {} for name in strategies}
 
-    window = [c for c in entry_series.candles if FULL_WINDOW[0] <= c.timestamp <= FULL_WINDOW[1]]
-    for candle in window:
+    data_window = full_window_for(symbol_name)
+    entry_window = [c for c in entry_series.candles if data_window[0] <= c.timestamp <= data_window[1]]
+    for candle in entry_window:
         as_of = candle.timestamp
+        # See core/market_data/models.py CandleSeries.sliced_as_of and
+        # backtesting/engine.py: a series' own visibility must be gated on
+        # ITS candles' close (open + that series' timeframe), not on the M15
+        # entry candle's open -- passing `as_of` unchanged here would leak a
+        # still-forming H4/H1 candle's not-yet-known high/low/close.
+        entry_closed_at = as_of + timedelta(minutes=Timeframe.M15.minutes)
         context = AnalysisContext(
             symbol=symbol, current_bid=candle.close, current_ask=candle.close + (candle.spread or 0.0),
             session="unspecified",
-            higher_timeframe=higher_series.sliced_as_of(as_of), middle_timeframe=middle_series.sliced_as_of(as_of),
-            entry_timeframe=entry_series.sliced_as_of(as_of), as_of=as_of,
+            higher_timeframe=higher_series.sliced_as_of(entry_closed_at),
+            middle_timeframe=middle_series.sliced_as_of(entry_closed_at),
+            entry_timeframe=entry_series.sliced_as_of(entry_closed_at), as_of=as_of,
         )
         for name, strategy in strategies.items():
             signal = strategy.analyze(context)
@@ -263,7 +272,10 @@ def independence_check(symbol_name: str) -> dict:
 
 def main() -> None:
     registry = OptimizationRegistry()
-    summary = {"min_confidence": MIN_CONFIDENCE, "window": [FULL_WINDOW[0].isoformat(), FULL_WINDOW[1].isoformat()]}
+    summary = {
+        "min_confidence": MIN_CONFIDENCE,
+        "windows": {s: [w.isoformat() for w in full_window_for(s)] for s in ("EURUSD", "XAUUSD")},
+    }
     for symbol_name in ("EURUSD", "XAUUSD"):
         print(f"=== combinations :: {symbol_name} ===", flush=True)
         summary[symbol_name] = run_symbol(symbol_name, registry)

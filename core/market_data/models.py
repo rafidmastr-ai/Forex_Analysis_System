@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 
 
@@ -86,8 +86,22 @@ class CandleSeries:
         Data Validation Layer), so this is a binary search — important for
         the Backtesting Engine, which calls this once per simulated bar;
         a linear scan here would make a full backtest run O(n^2).
+
+        `Candle.timestamp` is documented as the bar's OPEN time, not its
+        close. A candle only becomes fully known (high/low/close settled)
+        at `timestamp + self.timeframe.minutes` — its own close. Comparing
+        `as_of` against the raw open timestamp (the previous implementation)
+        is only harmless when `as_of` itself already represents "this
+        series' own most recent closed bar" (its close instant): for a
+        series in a DIFFERENT, coarser timeframe than the one `as_of` was
+        derived from, it silently includes a candle that has not finished
+        forming yet — its stored high/low/close reflect price action past
+        `as_of`, a genuine look-ahead leak. Gating on each candle's own
+        close (`timestamp + this series' bar length`) is correct regardless
+        of which timeframe `as_of` came from.
         """
-        idx = bisect_right(self.candles, as_of, key=lambda c: c.timestamp)
+        close_offset = timedelta(minutes=self.timeframe.minutes)
+        idx = bisect_right(self.candles, as_of - close_offset, key=lambda c: c.timestamp)
         return CandleSeries(symbol=self.symbol, timeframe=self.timeframe, candles=self.candles[:idx])
 
 

@@ -11,7 +11,7 @@ to open it).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from backtesting.run_config import BacktestRunConfig
 from core.context.analysis_context import AnalysisContext
@@ -101,7 +101,19 @@ class BacktestEngine:
 
         if self._timeframes_config is not None:
             selector = TimeframeSelector(self._timeframes_config)
-            resolved = selector.select()
+            entry_mapping = self._timeframes_config.get("entry_mapping")
+            if entry_mapping is not None and config.entry_timeframe.value in entry_mapping:
+                # Entry-timeframe-aware resolution (see TimeframeSelector.resolve_for_entry):
+                # required once the backtest tests entry timeframes other than the single
+                # one production ever requests -- the old static default_mapping (always
+                # Higher=H4/Middle=H1 regardless of entry) silently produced a Higher/Middle
+                # series at or below the entry timeframe's own resolution for some entries.
+                resolved = selector.resolve_for_entry(config.entry_timeframe)
+            else:
+                # Backward-compatible fallback for any caller/config that doesn't supply
+                # entry_mapping (e.g. live /analyze's own call site, which never goes
+                # through BacktestEngine at all, and older tests/configs here).
+                resolved = selector.select()
             higher_series = self._provider.get_ohlcv(symbol, resolved.higher, count=100000)
             middle_series = self._provider.get_ohlcv(symbol, resolved.middle, count=100000)
         else:
@@ -114,14 +126,28 @@ class BacktestEngine:
         window = [c for c in entry_series.candles if config.start <= c.timestamp <= config.end]
         for candle in window:
             as_of = candle.timestamp
+            # `as_of` is this candle's OPEN timestamp (see Candle.timestamp's own
+            # contract) -- current_bid/ask below deliberately use its CLOSE price
+            # (candle.close), i.e. the decision is genuinely being made at the
+            # instant this candle closes. CandleSeries.sliced_as_of() gates each
+            # series on ITS OWN candles' close time, so the true "closed as of"
+            # instant to slice against is this entry candle's own close, not its
+            # open -- passing the open through unchanged would (for any series in
+            # a DIFFERENT, coarser timeframe than the entry one) let a still-
+            # forming Higher/Middle candle leak its not-yet-known high/low/close
+            # into the context. `as_of` itself is untouched for everything else
+            # below (opened_at, future_candles, AnalysisContext.as_of, kill
+            # zones/session gating) -- only the three sliced_as_of() calls need
+            # the true close instant.
+            entry_closed_at = as_of + timedelta(minutes=config.entry_timeframe.minutes)
             context = AnalysisContext(
                 symbol=symbol,
                 current_bid=candle.close,
                 current_ask=candle.close + (candle.spread or 0.0),
                 session="unspecified",
-                higher_timeframe=self._bounded(higher_series.sliced_as_of(as_of), "higher"),
-                middle_timeframe=self._bounded(middle_series.sliced_as_of(as_of), "middle"),
-                entry_timeframe=self._bounded(entry_series.sliced_as_of(as_of), "entry"),
+                higher_timeframe=self._bounded(higher_series.sliced_as_of(entry_closed_at), "higher"),
+                middle_timeframe=self._bounded(middle_series.sliced_as_of(entry_closed_at), "middle"),
+                entry_timeframe=self._bounded(entry_series.sliced_as_of(entry_closed_at), "entry"),
                 as_of=as_of,
             )
             setup = self._selection_engine.run(strategies, context)

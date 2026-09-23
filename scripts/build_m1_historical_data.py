@@ -1,18 +1,36 @@
 #!/usr/bin/env python3
 """Builds data/historical/{SYMBOL}_{TIMEFRAME}.csv for M1, M5, M15, M30, H1,
-H4 from the newly-uploaded raw M1 OHLC files (EURUSD, XAUUSD).
+H4 from the raw M1 OHLC files checked into this repository under
+data/market/ -- the single, authoritative source of raw market data for
+this project. This script has NO dependency on any /root/.claude/uploads/...
+path or any other temporary/local upload location: it reads only
+data/market/{SYMBOL}.csv for each supported symbol, and never copies the
+raw files anywhere else.
 
-Source files (read-only, never modified, never copied elsewhere):
-    /root/.claude/uploads/1f34c459-1bf3-5277-a995-3d20f0daa5ad/ae0dd58c-EURUSD.csv
-    /root/.claude/uploads/1f34c459-1bf3-5277-a995-3d20f0daa5ad/0c71be54-XAUUSD.csv
-Columns: timestamp (epoch milliseconds, UTC), open, high, low, close. No
-volume column in the source -- every converted row's volume is written as
-0.0 (never fabricated). None of the four adopted strategies (Classic, SMC,
+Supported symbols: EURUSD, XAUUSD, GBPUSD, NZDUSD (SUPPORTED_SYMBOLS below
+-- the single place this list is defined for this script).
+
+Two timestamp column conventions are both accepted, since the checked-in
+files use both: `timestamp` (epoch milliseconds, UTC -- EURUSD/XAUUSD) or
+`datetime` (a "YYYY-MM-DD HH:MM:SS" text UTC timestamp -- GBPUSD/NZDUSD).
+Neither is "incorrect" and neither is rewritten -- both already correctly
+describe their own column's content, so per this task's scope only a
+genuinely incorrect header would be corrected, and neither is. `open`,
+`high`, `low`, `close` are required in every file. No volume column exists
+in any source file -- every converted row's volume is written as 0.0
+(never fabricated). None of the four adopted strategies (Classic, SMC,
 ICT, SweepDisplacement) read Candle.volume (only core/algorithms/indicators
 /vwap.py does, and nothing wires VWAP into any of the four), so this has no
-effect on any tested result. No spread column exists in the source either,
-so it is simply omitted (HistoricalFileMarketDataProvider already treats a
-missing spread column as "no spread data", used honestly, not invented).
+effect on any tested result. No spread column exists in any source file
+either, so it is simply omitted (HistoricalFileMarketDataProvider already
+treats a missing spread column as "no spread data" -- kept as None, never
+invented).
+
+Every raw file is validated, loudly, before any aggregation: required
+columns present; every timestamp parses; no duplicate timestamps; no NaN
+OHLC; high >= max(open, close); low <= min(open, close); no zero/negative
+price. Any violation raises immediately (see _load_m1) -- this script never
+silently drops or repairs a bad row.
 
 Aggregation to M5/M15/M30/H1/H4 uses UTC-calendar-aligned buckets (e.g. H4
 bars start at 00:00/04:00/08:00/12:00/16:00/20:00 UTC -- the standard
@@ -21,17 +39,20 @@ epoch-anchored index): Open = open of the bucket's FIRST M1 candle, High =
 max High, Low = min Low, Close = close of the bucket's LAST M1 candle.
 
 Every aggregated candle is validated by TWO independently-coded methods
-(pandas .resample() and a hand-rolled integer-bucket groupby) that must
-agree exactly on open/high/low/close AND on which M1 rows fed each bucket,
-for every single bucket -- not a sample. The last bucket of a series is
-dropped if it is not fully covered by available M1 data through the
-bucket's own end boundary (avoids ever presenting a still-forming candle as
-closed); this is a no-op here because both source files' history ends
-exactly on a UTC midnight boundary, but the check is unconditional so it
-would matter with a different upload.
+(pandas .resample() and a hand-rolled floor()+groupby) that must agree
+exactly on open/high/low/close AND on which M1 rows fed each bucket, for
+every single bucket -- not a sample -- for ALL FOUR symbols. The last
+bucket of a series is dropped if it is not fully covered by available M1
+data through the bucket's own end boundary (never presenting a still-
+forming candle as closed).
 
 Never used for any decision affecting Strategy/Weight/Filter/Threshold
-logic -- purely a data-preparation and validation step.
+logic -- purely a data-preparation and validation step. This script also
+writes data/optimization_results/m1_htf_build_report.json, which
+scripts/data_window.py reads as the single authoritative source for each
+symbol's actual available data window (see that module) -- no backtest
+script should hard-code a date range separately from what this build step
+actually detected.
 """
 from __future__ import annotations
 
@@ -40,10 +61,8 @@ from pathlib import Path
 
 import pandas as pd
 
-SOURCE_FILES = {
-    "EURUSD": "/root/.claude/uploads/1f34c459-1bf3-5277-a995-3d20f0daa5ad/ae0dd58c-EURUSD.csv",
-    "XAUUSD": "/root/.claude/uploads/1f34c459-1bf3-5277-a995-3d20f0daa5ad/0c71be54-XAUUSD.csv",
-}
+MARKET_DATA_DIR = Path("data/market")
+SUPPORTED_SYMBOLS = ["EURUSD", "XAUUSD", "GBPUSD", "NZDUSD"]
 
 OUTPUT_DIR = Path("data/historical")
 
@@ -57,19 +76,48 @@ TIMEFRAMES = {
     "H4": ("4h", 240),
 }
 
+_REQUIRED_OHLC_COLUMNS = ("open", "high", "low", "close")
 
-def _load_m1(path: str) -> pd.DataFrame:
+
+def _parse_timestamp_column(df: pd.DataFrame, path: str) -> pd.Series:
+    if "timestamp" in df.columns:
+        return pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+    if "datetime" in df.columns:
+        return pd.to_datetime(df["datetime"], utc=True)
+    raise ValueError(f"{path}: no recognized timestamp column -- need 'timestamp' (epoch ms) or 'datetime' (text)")
+
+
+def _load_m1(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path)
-    expected_cols = {"timestamp", "open", "high", "low", "close"}
-    if set(df.columns) != expected_cols:
-        raise ValueError(f"{path}: unexpected columns {list(df.columns)}, expected {sorted(expected_cols)}")
-    df["dt"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
-    df = df.sort_values("dt").reset_index(drop=True)
-    if df["dt"].duplicated().any():
-        raise ValueError(f"{path}: duplicate timestamps found -- refusing to silently aggregate over them")
-    for col in ("open", "high", "low", "close"):
+
+    missing = [c for c in _REQUIRED_OHLC_COLUMNS if c not in df.columns]
+    if missing:
+        raise ValueError(f"{path}: missing required column(s) {missing} -- has {list(df.columns)}")
+
+    df["dt"] = _parse_timestamp_column(df, str(path))
+    if df["dt"].isna().any():
+        raise ValueError(f"{path}: {int(df['dt'].isna().sum())} row(s) have an unparseable timestamp")
+
+    for col in _REQUIRED_OHLC_COLUMNS:
         if df[col].isna().any():
-            raise ValueError(f"{path}: NaN values in column {col!r}")
+            raise ValueError(f"{path}: {int(df[col].isna().sum())} NaN value(s) in column {col!r}")
+        if (df[col] <= 0).any():
+            raise ValueError(f"{path}: {int((df[col] <= 0).sum())} zero/negative price(s) in column {col!r}")
+
+    invalid_high = df["high"] < df[["open", "close", "low"]].max(axis=1)
+    if invalid_high.any():
+        raise ValueError(f"{path}: {int(invalid_high.sum())} row(s) have high < max(open, close, low)")
+    invalid_low = df["low"] > df[["open", "close", "high"]].min(axis=1)
+    if invalid_low.any():
+        raise ValueError(f"{path}: {int(invalid_low.sum())} row(s) have low > min(open, close, high)")
+
+    if df["dt"].duplicated().any():
+        raise ValueError(f"{path}: {int(df['dt'].duplicated().sum())} duplicate timestamp(s) found -- refusing to silently aggregate over them")
+
+    df = df.sort_values("dt").reset_index(drop=True)
+    if not df["dt"].is_monotonic_increasing:
+        raise ValueError(f"{path}: timestamps not strictly increasing after sorting -- unreachable unless duplicates slipped through")
+
     return df
 
 
@@ -141,9 +189,9 @@ def _cross_validate(resampled: pd.DataFrame, manual: pd.DataFrame, minutes: int,
     }
 
 
-def build_symbol(symbol: str, path: str) -> dict:
+def build_symbol(symbol: str, path: Path) -> dict:
     df = _load_m1(path)
-    report: dict = {"symbol": symbol, "source_path": path, "m1_rows": len(df),
+    report: dict = {"symbol": symbol, "source_path": str(path), "m1_rows": len(df),
                      "start_utc": df["dt"].iloc[0].isoformat(), "end_utc": df["dt"].iloc[-1].isoformat(),
                      "timeframes": {}}
 
@@ -181,7 +229,13 @@ def build_symbol(symbol: str, path: str) -> dict:
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     full_report = {}
-    for symbol, path in SOURCE_FILES.items():
+    for symbol in SUPPORTED_SYMBOLS:
+        path = MARKET_DATA_DIR / f"{symbol}.csv"
+        if not path.exists():
+            raise FileNotFoundError(
+                f"expected raw M1 data at {path} -- data/market/ is the single source of truth for "
+                f"this pipeline; no fallback to any other location (e.g. an upload path) is used."
+            )
         print(f"=== building {symbol} ===", flush=True)
         r = build_symbol(symbol, path)
         full_report[symbol] = r
