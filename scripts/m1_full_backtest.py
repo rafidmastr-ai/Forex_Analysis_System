@@ -55,6 +55,7 @@ import bisect
 import json
 import sys
 import time
+import traceback
 from dataclasses import asdict
 from pathlib import Path
 from statistics import median
@@ -227,21 +228,58 @@ def main() -> None:
         "timeframes": ENTRY_TIMEFRAMES, "results": {},
     }
 
+    errors: list[dict] = []
+    successful = 0
+    failed = 0
+    total_runs = len(ADOPTED_STRATEGY_BUILDERS) * len(SYMBOL_NAMES) * len(ENTRY_TIMEFRAMES)
+
     t_start = time.time()
     for strategy_name in ADOPTED_STRATEGY_BUILDERS:
         all_results["results"][strategy_name] = {}
         for symbol_name in SYMBOL_NAMES:
             all_results["results"][strategy_name][symbol_name] = {}
             for tf_name in ENTRY_TIMEFRAMES:
-                result = run_one(strategy_name, symbol_name, tf_name, session_defs)
-                all_results["results"][strategy_name][symbol_name][tf_name] = result
+                # A single combination's runtime failure must not lose the
+                # other 95 independent runs, and must never be silently
+                # dropped either -- recorded verbatim in both the JSON and
+                # the run log, never patched over by changing any strategy/
+                # weight/filter/threshold logic.
+                try:
+                    result = run_one(strategy_name, symbol_name, tf_name, session_defs)
+                    all_results["results"][strategy_name][symbol_name][tf_name] = result
+                    successful += 1
+                except Exception as exc:  # noqa: BLE001
+                    failed += 1
+                    error_record = {
+                        "strategy": strategy_name, "symbol": symbol_name, "timeframe": tf_name,
+                        "error_type": type(exc).__name__, "error_message": str(exc),
+                        "traceback": traceback.format_exc(),
+                    }
+                    errors.append(error_record)
+                    all_results["results"][strategy_name][symbol_name][tf_name] = {"status": "FAILED", **error_record}
+                    print(f"[{strategy_name}/{symbol_name}/{tf_name}] FAILED: {type(exc).__name__}: {exc}", flush=True)
 
                 out_path = Path("data/optimization_results/m1_full_backtest.json")
                 out_path.parent.mkdir(parents=True, exist_ok=True)
+                all_results["run_status"] = {
+                    "total_runs": total_runs, "successful_runs": successful, "failed_runs": failed,
+                    "errors": errors, "elapsed_seconds_so_far": time.time() - t_start,
+                }
                 out_path.write_text(json.dumps(all_results, indent=2, default=str))
 
     total_elapsed = time.time() - t_start
-    print(f"\n=== ALL RUNS COMPLETE in {total_elapsed / 60:.1f} minutes ===", flush=True)
+    all_results["run_status"]["total_elapsed_seconds"] = total_elapsed
+    out_path = Path("data/optimization_results/m1_full_backtest.json")
+    out_path.write_text(json.dumps(all_results, indent=2, default=str))
+
+    print(f"\n=== RUN SUMMARY: {successful}/{total_runs} succeeded, {failed}/{total_runs} failed "
+          f"in {total_elapsed / 60:.1f} minutes ===", flush=True)
+    if failed:
+        for e in errors:
+            print(f"  FAILED: {e['strategy']}/{e['symbol']}/{e['timeframe']} -- {e['error_type']}: {e['error_message']}", flush=True)
+        print("\nFULL BACKTEST INCOMPLETE", flush=True)
+    else:
+        print("\nFULL BACKTEST COMPLETE", flush=True)
     print("summary written to data/optimization_results/m1_full_backtest.json", flush=True)
 
 
