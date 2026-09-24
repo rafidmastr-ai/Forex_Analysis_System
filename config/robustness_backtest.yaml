@@ -1,0 +1,38 @@
+# Robustness (R:R-cap) backtest configuration.
+#
+# Purpose: test whether the Baseline current-version backtest's edge is
+# real and stable, or depends heavily on a small number of trades with an
+# extreme realized R:R. This is a POST-TRADE, POST-PROCESSING test only:
+# it reads the REALIZED R (TradeOutcome.r_multiple, not
+# planned_rr_tp1/tp2) of each trade already decided by BacktestEngine, and
+# caps it at rr_cap for winning trades only. It never changes Entry, SL,
+# TP, Strategy logic, Weights, Filters, Confidence, signal generation,
+# minimum R:R, timeframe mapping, lookback, dataset, or the same-candle
+# (SL-before-TP) policy -- those are exactly the Baseline's, unchanged.
+#
+# A losing trade's realized R (-1.0, fixed) and an unresolved trade's
+# (0.0, excluded from R stats) are always <= any positive cap here, so
+# every mode below leaves them completely unchanged -- only a winning
+# trade whose realized R already exceeds rr_cap is affected, and only its
+# R value changes (never its outcome/hit/entry/sl/tp).
+
+robustness_backtest:
+  description: >
+    Post-trade R:R cap robustness test over the same 96 Strategy x Symbol
+    x Timeframe configurations as the current-version Baseline (see
+    data/optimization_results/m1_full_backtest.json). Baseline (rr_cap
+    null) must reproduce that file's numbers exactly before the capped
+    modes are trusted.
+  modes:
+    - label: Baseline
+      rr_cap: null
+    - label: Cap_5.0
+      rr_cap: 5.0
+    - label: Cap_4.0
+      rr_cap: 4.0
+    - label: Cap_3.0
+      rr_cap: 3.0
+    - label: Cap_2.5
+      rr_cap: 2.5
+    - label: Cap_2.0
+      rr_cap: 2.0
