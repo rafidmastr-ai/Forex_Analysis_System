@@ -277,9 +277,9 @@ def render() -> tuple[str, list[dict]]:
         "| Classification | Count (of 96) |",
         "|---|---:|",
     ]
-    classifications = {strategy: classify_outlier_dependency(cell) for strategy, symbol, tf, cell in cells}
+    classifications = [classify_outlier_dependency(cell) for _, _, _, cell in cells]
     counts: dict[str, int] = {}
-    for c in classifications.values():
+    for c in classifications:
         counts[c] = counts.get(c, 0) + 1
     for label in ("High R-Multiple Sensitivity", "Low R-Multiple Sensitivity", "N/A (baseline non-positive)", "n/a (failed run)"):
         if counts.get(label):
