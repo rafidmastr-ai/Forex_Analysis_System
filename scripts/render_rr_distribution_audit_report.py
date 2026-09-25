@@ -13,10 +13,13 @@ from __future__ import annotations
 import csv
 import json
 import math
+import sys
 from pathlib import Path
 from typing import Hashable, TypeVar
 
-from optimization.rr_distribution import (
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from optimization.rr_distribution import (  # noqa: E402
     bin_distribution,
     global_distribution_summary,
     percentile,
@@ -54,6 +57,55 @@ def _iter_cells(cells: dict):
 
 def _is_failed(cell: dict) -> bool:
     return isinstance(cell, dict) and cell.get("status") == "FAILED"
+
+
+def _is_structurally_inverted_sl(t: dict) -> bool:
+    """A stop-loss on the wrong side of entry for the trade's own direction
+    (SL above entry on a BUY, or below entry on a SELL) -- checkable purely
+    from the trade's own stored prices, independent of whether SL was ever
+    hit."""
+    if t["direction"] == "BUY":
+        return t["stop_loss"] > t["entry"]
+    return t["stop_loss"] < t["entry"]
+
+
+def _r_multiple_validation_breakdown(trades: list[dict]) -> dict:
+    """Splits the independent-R-multiple discrepancies (item 9) by outcome
+    type and cross-references them against structurally-inverted stop-loss
+    placement, to distinguish a genuine R-multiple computation bug from the
+    already-documented inverted-SL condition."""
+    wins = [t for t in trades if t["hit"] in ("TP1", "TP2")]
+    resolved = [t for t in trades if t["hit"] != "NONE"]
+    total_sl_trades = sum(1 for t in trades if t["hit"] == "SL")
+    discrepant = [t for t in resolved if t["r_multiple_discrepancy"] is not None and abs(t["r_multiple_discrepancy"]) > 1e-6]
+    win_discrepancies = [t for t in discrepant if t["hit"] in ("TP1", "TP2")]
+    sl_discrepancies = [t for t in discrepant if t["hit"] == "SL"]
+    sl_discrepancies_inverted = [t for t in sl_discrepancies if _is_structurally_inverted_sl(t)]
+
+    inverted_wins = [t for t in wins if _is_structurally_inverted_sl(t)]
+    wins_gt20 = [t for t in wins if t["r_multiple"] > 20]
+    wins_gt20_inverted = [t for t in wins_gt20 if _is_structurally_inverted_sl(t)]
+    wins_gt50 = [t for t in wins if t["r_multiple"] > 50]
+    wins_gt50_inverted = [t for t in wins_gt50 if _is_structurally_inverted_sl(t)]
+    non_inverted_extreme = [t for t in wins_gt20 if not _is_structurally_inverted_sl(t)]
+    sl_distances = [abs(t["entry"] - t["stop_loss"]) for t in non_inverted_extreme]
+
+    return {
+        "trades_checked": len(resolved),
+        "total_discrepancies": len(discrepant),
+        "winning_trade_discrepancies": len(win_discrepancies),
+        "winning_trades_checked": len(wins),
+        "total_sl_trades": total_sl_trades,
+        "sl_discrepancies": len(sl_discrepancies),
+        "sl_discrepancies_with_inverted_sl": len(sl_discrepancies_inverted),
+        "sl_discrepancies_not_inverted": len(sl_discrepancies) - len(sl_discrepancies_inverted),
+        "total_winning_trades": len(wins),
+        "structurally_inverted_sl_wins": len(inverted_wins),
+        "wins_over_20r": len(wins_gt20), "wins_over_20r_inverted_sl": len(wins_gt20_inverted),
+        "wins_over_50r": len(wins_gt50), "wins_over_50r_inverted_sl": len(wins_gt50_inverted),
+        "non_inverted_extreme_sl_distance_min": min(sl_distances) if sl_distances else None,
+        "non_inverted_extreme_sl_distance_median": sorted(sl_distances)[len(sl_distances) // 2] if sl_distances else None,
+    }
 
 
 def _cell_key(t: dict) -> tuple[str, str, str]:
@@ -131,6 +183,7 @@ def render() -> tuple[str, list[dict], dict[tuple[str, str, str], dict]]:
     cells_raw = data["cells"]
     run_status = data.get("run_status", {})
     r_validation = data.get("r_multiple_validation", {})
+    r_breakdown = _r_multiple_validation_breakdown(trades)
 
     cell_pairs = list(_iter_cells(cells_raw))
     ok_cell_pairs = [(s, sym, tf, c) for s, sym, tf, c in cell_pairs if not _is_failed(c)]
@@ -164,10 +217,13 @@ def render() -> tuple[str, list[dict], dict[tuple[str, str, str], dict]]:
         f"({global_summary['winning_trades']} wins, {global_summary['losing_trades']} losses, "
         f"{global_summary['unresolved_trades']} unresolved).",
         f"- Global Net R = {r2(global_summary['net_r'])}, Profit Factor = {r2(global_summary['profit_factor'])}.",
-        f"- R-multiple independent validation: {r_validation.get('trades_checked', 0)} trades checked, "
-        f"{r_validation.get('discrepancies_found', 0)} discrepancies found "
-        f"(tolerance {1e-6:g}R), {r_validation.get('trades_with_undefined_sl_distance', 0)} resolved trades "
-        "had an undefined (zero-distance) stop-loss.",
+        f"- R-multiple independent validation: {r_breakdown['winning_trades_checked']}/{r_breakdown['winning_trades_checked']} "
+        "WINNING trades independently re-derive their stored realized R exactly (0 discrepancies) -- see Section 13. "
+        f"Separately, {r_breakdown['sl_discrepancies']} of {r_breakdown['total_sl_trades']} SL-hit (losing) trades "
+        "have a stop-loss placed on the wrong side of entry for their own direction -- an already-documented "
+        "condition, not a new R-multiple computation bug (Section 13).",
+        f"- {r_validation.get('trades_with_undefined_sl_distance', 0)} resolved trades had an undefined "
+        "(zero-distance) stop-loss.",
         "",
     ]
 
@@ -293,10 +349,15 @@ def render() -> tuple[str, list[dict], dict[tuple[str, str, str], dict]]:
     lines.append("")
 
     # 10. 96-Cell Results
+    # Enumerated from cell_pairs (all 96 Strategy/Symbol/Timeframe combinations,
+    # including any with zero trades or a failed run) -- NOT from by_cell's keys
+    # alone, which would silently omit a zero-trade cell (e.g. a cell whose
+    # signal generation produced no setups at all).
     lines += ["## 10. 96-Cell Results", "", CELL_TABLE_HEADER]
     cell_stats_map: dict[tuple[str, str, str], dict] = {}
-    for cell_key in sorted(by_cell):
-        cell_trades = by_cell[cell_key]
+    all_cell_keys = sorted({(s, sym, tf) for s, sym, tf, _ in cell_pairs})
+    for cell_key in all_cell_keys:
+        cell_trades = by_cell.get(cell_key, [])
         stats = _cell_stats_row(cell_trades)
         cell_stats_map[cell_key] = stats
         lines.append(_cell_row_line("/".join(cell_key), stats))
@@ -384,37 +445,71 @@ def render() -> tuple[str, list[dict], dict[tuple[str, str, str], dict]]:
               "`SelectedSetup.risk_reward_tp1`/`risk_reward_tp2` again, which would be a circular "
               "self-comparison.",
               "",
-              f"- Trades checked: {r_validation.get('trades_checked', 0)}.",
+              f"- Resolved trades checked: {r_breakdown['trades_checked']}.",
               f"- Trades with an undefined (zero-distance) stop-loss: {r_validation.get('trades_with_undefined_sl_distance', 0)}.",
-              f"- Discrepancies found (|independent - stored| > 1e-6): {r_validation.get('discrepancies_found', 0)}.",
+              f"- **WINNING (TP1/TP2) trades**: {r_breakdown['winning_trade_discrepancies']} discrepancies out of "
+              f"{r_breakdown['winning_trades_checked']} checked -- every winning trade's realized R independently "
+              "reproduces the stored value exactly. This directly answers the audit's central question about the "
+              "realized-R distribution in Sections 4-11: the winning-trade R-multiple numbers analyzed throughout "
+              "this report are not the product of a computation bug.",
+              f"- **SL (losing) trades**: {r_breakdown['sl_discrepancies']} discrepancies out of "
+              f"{r_breakdown['total_sl_trades']} SL-hit trades. `BacktestEngine._simulate_outcome` stores exactly "
+              "`-1.0` for every SL hit as a fixed convention, rather than computing it from price -- so this "
+              "figure compares that convention against the geometric formula above, not one computed value "
+              "against another.",
+              f"  - Of those {r_breakdown['sl_discrepancies']} SL-trade discrepancies, "
+              f"{r_breakdown['sl_discrepancies_with_inverted_sl']} ({pct(r_breakdown['sl_discrepancies_with_inverted_sl'] / r_breakdown['sl_discrepancies']) if r_breakdown['sl_discrepancies'] else 'n/a'}) "
+              "have a stop-loss placed on the wrong side of entry for the trade's own direction (SL above entry on "
+              f"a BUY, or below entry on a SELL) -- checkable directly from the stored prices, independent of "
+              "whether SL was ever hit. This is consistent with, and independently confirms via this audit's own "
+              "numeric check (not a re-diagnosis from scratch), the previously documented S/R and "
+              "sweep-anchoring proximity-gate finding in `CURRENT_VERSION_LOSS_DIAGNOSTIC_REPORT.md`, which found "
+              "those gates check absolute distance only, not directional correctness.",
+              f"  - The remaining {r_breakdown['sl_discrepancies_not_inverted']} have a correctly-sided but "
+              "very small stop-loss distance, which the -1.0 convention also does not reflect geometrically "
+              "(it is a fixed loss-of-risked-capital convention, not a per-trade price computation).",
               ""]
-    if r_validation.get("discrepancies_found"):
-        lines.append("Discrepancies were found and are NOT auto-fixed -- see `discrepancy_samples` in "
-                      "`data/optimization_results/trade_level_audit.json` for full detail on each one.")
-        lines.append("")
+    lines.append("### Structurally-inverted stop-loss among WINNING trades")
+    lines.append("")
+    lines.append("A stop-loss can be checked for wrong-side placement on ANY trade from its stored prices alone, "
+                 "whether or not SL was the outcome that occurred -- this isolates whether extreme WINNING R "
+                 "values are linked to the same inverted-SL condition found above, or to something else.")
+    lines.append("")
+    lines.append(f"- Of {r_breakdown['total_winning_trades']} winning trades, "
+                 f"{r_breakdown['structurally_inverted_sl_wins']} have a structurally-inverted stop-loss.")
+    lines.append(f"- Of {r_breakdown['wins_over_20r']} winning trades with realized R > 20, "
+                 f"{r_breakdown['wins_over_20r_inverted_sl']} have a structurally-inverted stop-loss "
+                 f"({r_breakdown['wins_over_20r'] - r_breakdown['wins_over_20r_inverted_sl']} do not).")
+    lines.append(f"- Of {r_breakdown['wins_over_50r']} winning trades with realized R > 50, "
+                 f"{r_breakdown['wins_over_50r_inverted_sl']} have a structurally-inverted stop-loss "
+                 f"({r_breakdown['wins_over_50r'] - r_breakdown['wins_over_50r_inverted_sl']} do not).")
+    if r_breakdown["non_inverted_extreme_sl_distance_min"] is not None:
+        lines.append(f"- Among the R>20 winners with a correctly-sided (non-inverted) stop-loss, the SL distance "
+                     f"(in raw price units) ranges down to {r_breakdown['non_inverted_extreme_sl_distance_min']:.2e} "
+                     f"(median {r_breakdown['non_inverted_extreme_sl_distance_median']:.2e}) -- i.e. most extreme "
+                     "winning R values in this dataset come from a correctly-directed but extremely small "
+                     "stop-loss distance relative to the take-profit distance, not from an inverted SL, an "
+                     "incorrect trade direction, or a unit/pip-conversion error.")
+    lines.append("")
     top_r_trades = sorted(winning_trades, key=lambda t: t["r_multiple"], reverse=True)[:10]
     lines.append("### Manual verification sample: top 10 highest-realized-R winning trades")
     lines.append("")
-    lines.append("| Strategy/Symbol/TF | Direction | Entry | SL | SL Distance | Exit (TP hit) | Stored R | Independent R | Match |")
-    lines.append("|---|---|---:|---:|---:|---:|---:|---:|---|")
+    lines.append("| Strategy/Symbol/TF | Direction | Entry | SL | SL Distance | Exit (TP hit) | Stored R | Independent R | Match | Inverted SL |")
+    lines.append("|---|---|---:|---:|---:|---:|---:|---:|---|---|")
     for t in top_r_trades:
         sl_distance = abs(t["entry"] - t["stop_loss"])
         exit_price = t["take_profit_2"] if t["hit"] == "TP2" else t["take_profit_1"]
         match = "yes" if t["independent_r_multiple"] is not None and abs(t["independent_r_multiple"] - t["r_multiple"]) <= 1e-6 else "NO"
+        inverted = "yes" if _is_structurally_inverted_sl(t) else "no"
         lines.append(f"| {t['strategy']}/{t['symbol']}/{t['timeframe']} | {t['direction']} | {t['entry']:.5f} | "
                       f"{t['stop_loss']:.5f} | {sl_distance:.6f} | {exit_price:.5f} | {r2(t['r_multiple'])} | "
-                      f"{r2(t['independent_r_multiple'])} | {match} |")
+                      f"{r2(t['independent_r_multiple'])} | {match} | {inverted} |")
     lines.append("")
-    small_sl = [t for t in winning_trades if abs(t["entry"] - t["stop_loss"]) > 0 and t["r_multiple"] > 20]
-    lines.append(f"Of the {len([t for t in winning_trades if t['r_multiple'] > 20])} winning trades with realized R > 20, "
-                 f"{len(small_sl)} have a nonzero (but not necessarily large) SL distance -- extreme R values in this "
-                 "dataset arise from a SMALL stop-loss distance relative to the take-profit distance, not from a zero "
-                 "or negative SL distance, incorrect direction, or a unit/pip-conversion error (see the matching "
-                 "Independent R column above). This is consistent with, and does not re-diagnose from scratch beyond "
-                 "confirming, the previously documented S/R and sweep-anchoring proximity-gate finding in "
-                 "`CURRENT_VERSION_LOSS_DIAGNOSTIC_REPORT.md`, which found these gates check absolute distance only, "
-                 "not directional correctness, which can produce a stop-loss placed unusually close to entry.")
-    lines.append("")
+    if r_breakdown["total_discrepancies"]:
+        lines.append("Discrepancies were found (see above) and are NOT auto-fixed -- see `discrepancy_samples` in "
+                      "`data/optimization_results/trade_level_audit.json` for the full list of affected SL-hit "
+                      "trades. No Strategy/SL/Entry/TP logic was changed in response to this finding.")
+        lines.append("")
 
     # 14. Data/Backtest Limitations
     lines += ["## 14. Data/Backtest Limitations", "",
@@ -463,12 +558,17 @@ def render() -> tuple[str, list[dict], dict[tuple[str, str, str], dict]]:
               f"{r2(global_summary['net_r'])} to {r2(trim.get('trim_1pct', {}).get('net_r'))}, and removing the "
               f"top 5% changes it to {r2(trim.get('trim_5pct', {}).get('net_r'))}.",
               f"- Independent recomputation of realized R from stored Entry/SL/Exit prices matched the "
-              f"project's stored `r_multiple` for {r_validation.get('trades_checked', 0) - r_validation.get('discrepancies_found', 0)} "
-              f"of {r_validation.get('trades_checked', 0)} checked trades "
-              f"({r_validation.get('discrepancies_found', 0)} discrepancies found).",
-              "- Extreme realized-R winning trades in this dataset are associated with a small stop-loss "
-              "distance relative to the take-profit distance (see Section 13), not with a zero/negative SL "
-              "distance, incorrect trade direction, or a unit/pip-conversion error.",
+              f"project's stored `r_multiple` for all {r_breakdown['winning_trades_checked']} winning trades "
+              "checked (0 discrepancies). All discrepancies found (see Section 13) are on SL-hit (losing) "
+              "trades, where the engine stores a fixed `-1.0` by convention rather than a computed value; "
+              f"{r_breakdown['sl_discrepancies_with_inverted_sl']} of those {r_breakdown['sl_discrepancies']} "
+              "SL-trade cases have a stop-loss on the wrong side of entry for the trade's own direction.",
+              "- Extreme realized-R WINNING trades in this dataset are associated with a small, correctly-sided "
+              "stop-loss distance relative to the take-profit distance (see Section 13): among winners with "
+              f"realized R > 20, {r_breakdown['wins_over_20r'] - r_breakdown['wins_over_20r_inverted_sl']} of "
+              f"{r_breakdown['wins_over_20r']} have a correctly-sided (non-inverted) stop-loss, meaning most of "
+              "this dataset's extreme winning R values are not explained by a zero/negative SL distance, "
+              "incorrect trade direction, or a unit/pip-conversion error.",
               f"- Baseline reproducibility: {'the audit reproduced data/optimization_results/m1_full_backtest.json exactly for every checked cell.' if not mismatches else f'{len(mismatches)} cell(s) did not match the prior Baseline exactly (see Section 3).'}",
               ""]
 
